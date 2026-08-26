@@ -18,6 +18,17 @@
   <img alt="runtime" src="https://img.shields.io/badge/node-%E2%89%A518-informational">
 </p>
 
+<p align="center">
+  <a href="#what-it-does">What it does</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#commands">Commands</a> ·
+  <a href="#the-ceiling">The ceiling</a> ·
+  <a href="#the-three-actions">The three actions</a> ·
+  <a href="#config">Config</a> ·
+  <a href="#how-it-fails">How it fails</a> ·
+  <a href="#limits-worth-knowing-before-you-install-it">Limits</a>
+</p>
+
 ---
 
 ## The problem
@@ -121,10 +132,17 @@ A ceiling is that third answer:
 ```
 
 `go` still means carry on, and now it carries on to 99 rather than to the end of
-the plan. The ceiling is not snoozeable, not subject to `action`, and not
-reachable by the model — `warn` still stops at it, and `/cclimit go` says so
-rather than pretending otherwise. Removing it is `/cclimit ceiling 5h off`, and
-there is none until you set one.
+the plan.
+
+| | line | ceiling |
+| --- | --- | --- |
+| What crossing it does | depends on `action` | always stops |
+| `/cclimit go` | lifts it until the window resets | says it still stands |
+| Under `action warn` | says something, blocks nothing | stops anyway |
+| Reachable by the model | no | no |
+| Set by default | 85% / 90% | none until you set one |
+
+Removing one is `/cclimit ceiling 5h off`.
 
 What this buys is unattended work. Without a ceiling a long task either waits
 for you at the line or, once you have said `go`, runs to the end of the plan
@@ -143,6 +161,12 @@ the sentence simply ends after the ceiling. The model is never asked to predict
 anything, and could not act on it if it were.
 
 ## The three actions
+
+| | what a crossing does | you keep the turn |
+| --- | --- | --- |
+| `stop` (default) | halts the turn, once per crossing | no |
+| `ask` | routes the tool call to the permission prompt | yes, one call at a time |
+| `warn` | prints a line, blocks nothing | yes |
 
 **`stop`** (default) — the turn halts outright and the reason is shown. One
 interruption per crossing, and nothing runs after it until you say so. The turn
