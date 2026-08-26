@@ -43,9 +43,11 @@ You set a line. Usage crosses it. The next thing Claude Code tries to do stops:
 
 ```
 cclimit: 5h usage hit 87% of your plan (your limit: 85%). Stopped before running Bash.
-Window resets 14:20, 26 Aug (in 42m).
+Window resets Aug 26, 14:20 (in 42m).
 Continue until the window resets: /cclimit go — raise the line: /cclimit 5h 92 — turn it off: /cclimit off
 ```
+
+The reset time is printed in your own locale, on a 24-hour clock.
 
 Nothing runs until you answer. `/cclimit go` stands down until the window resets,
 so you are asked once per crossing, not once per tool call.

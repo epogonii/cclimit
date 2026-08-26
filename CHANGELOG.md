@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2
+
+- The statusline wrapper now runs the most recently installed collector and
+  falls back to the path recorded at install time, rather than the other way
+  round. Plugin versions are installed side by side and the old directory stays
+  put, so preferring the recorded path meant an update never actually took
+  effect.
+- Reset times are printed on a 24-hour clock. `01:00 PM` costs a beat to read
+  in a sentence that has just interrupted you.
+
 ## 0.1.1
 
 - The statusline wrapper no longer depends on the collector staying where it

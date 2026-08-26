@@ -195,13 +195,14 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-// The wrapper cannot hard-code the path to the collector and stop there:
-// installing a plugin puts it in a directory named after its version, so the
-// next `claude plugin update` moves the collector out from under a path
-// recorded today. The pinned path is therefore only the first guess, a search
-// of the plugin cache is the second, and passing stdin straight through is the
-// answer when neither finds anything — an update must never be able to leave
-// someone with no statusline at all.
+// The wrapper cannot hard-code the path to the collector: installing a plugin
+// puts it in a directory named after its version, so `claude plugin update`
+// both moves the collector out from under a path recorded today and leaves the
+// old version sitting there to be found. So the most recently installed copy
+// in the plugin cache wins, the path recorded at install time is the fallback
+// for a collector that lives outside the cache, and passing stdin straight
+// through is the answer when neither finds anything — an update must never be
+// able to leave someone with no statusline at all.
 function wrapperScript(downstream) {
   const collector = downstream ? `node "$SINK" | ${downstream}` : 'node "$SINK" --render';
   const passthrough = downstream ? `cat | ${downstream}` : 'echo';
@@ -211,11 +212,12 @@ function wrapperScript(downstream) {
 # untouched. Remove it with /cclimit uninstall, which also restores
 # settings.json.
 #
-# The collector is looked up rather than fixed in place, because a plugin
-# update moves it into a directory named after the new version. If no copy of
-# it can be found at all, the statusline runs without it.
-SINK=${shellQuote(SINK)}
-[ -f "$SINK" ] || SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)
+# The collector is looked up rather than fixed in place, because each version of
+# a plugin is installed into a directory of its own: the newest one is the one
+# to run, and the path below is only for a copy kept outside the plugin cache.
+# If neither can be found, the statusline runs without the collector.
+SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)
+[ -f "$SINK" ] || SINK=${shellQuote(SINK)}
 if [ -f "$SINK" ]; then
   ${collector}
 else

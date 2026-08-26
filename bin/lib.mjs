@@ -140,11 +140,15 @@ export function untilReset(resetsAt, now = Math.floor(Date.now() / 1000)) {
 
 export function localTime(resetsAt) {
   if (!Number.isFinite(resetsAt) || resetsAt <= 0) return null;
+  // The order of the parts is the reader's locale to decide, but the clock is
+  // not: `01:00 PM` costs a beat to read in the middle of a sentence that has
+  // interrupted you, and `13:00` does not.
   return new Date(resetsAt * 1000).toLocaleString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
     day: 'numeric',
     month: 'short',
+    hour12: false,
   });
 }
 

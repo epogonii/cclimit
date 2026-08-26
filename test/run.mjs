@@ -231,6 +231,14 @@ check('nothing but a slash command gets past the gate', () => {
 // `resets_at` is a Unix timestamp in seconds today. If that ever changes shape,
 // the message the user reads must lose the reset sentence, not carry an
 // "Invalid Date (in NaNm)" through the middle of it.
+// `01:00 PM` costs a beat to read in a sentence that has just interrupted you.
+check('the reset time is on a 24-hour clock', () => {
+  feed(90, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (/\b[AP]\.?M\.?\b/i.test(res.stopReason)) throw new Error(`12-hour clock in: ${res.stopReason}`);
+  if (!/resets .*\d{2}:\d{2}/.test(res.stopReason)) throw new Error(`no reset time in: ${res.stopReason}`);
+});
+
 check('a reset time in an unexpected shape drops out of the message', () => {
   const payload = statusline(92, 10, {
     rate_limits: {
@@ -382,13 +390,24 @@ check('the wrapper still runs the statusline when the collector has moved', () =
   cli('install');
 
   const wrapper = fs.readFileSync(path.join(STATE, 'statusline-wrap.sh'), 'utf8');
-  if (!/ls -1dt .*plugins\/cache/.test(wrapper)) throw new Error(`no search for a moved collector: ${wrapper}`);
+  // The newest installed copy has to be preferred over the path recorded here,
+  // or an update would leave the old collector running for good: plugin
+  // versions are installed side by side and the old directory stays put.
+  const search = wrapper.indexOf('ls -1dt');
+  const recorded = wrapper.indexOf('|| SINK=');
+  if (search < 0 || recorded < 0) throw new Error(`wrapper does not look up the collector: ${wrapper}`);
+  if (search > recorded) throw new Error(`recorded path wins over the newest install: ${wrapper}`);
 
-  // Point it at a collector that is not there and hide the plugin cache, which
-  // is what an uninstalled or renamed version directory looks like from here.
+  // Point both the cache search and the recorded path at nothing, which is what
+  // an uninstalled or renamed version directory looks like from here.
   const moved = path.join(STATE, 'moved-wrap.sh');
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'cclimit-empty-'));
-  fs.writeFileSync(moved, wrapper.replace(/^SINK=.*$/m, `SINK='${path.join(empty, 'gone.mjs')}'`), { mode: 0o755 });
+  const gone = `'${path.join(empty, 'gone.mjs')}'`;
+  fs.writeFileSync(
+    moved,
+    wrapper.replace(/^SINK=.*$/m, `SINK=${gone}`).replace(/^\[ -f "\$SINK" \] \|\| SINK=.*$/m, `[ -f "$SINK" ] || SINK=${gone}`),
+    { mode: 0o755 }
+  );
 
   const run = spawnSync('sh', [moved], { input: 'payload from claude code', encoding: 'utf8', env: { ...process.env, HOME: empty } });
   eq(run.status, 0, 'exit status');
