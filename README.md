@@ -263,6 +263,10 @@ subagent started from there on has its model rewritten to the cheaper one, and
 the prompt is told once that this is happening. A ceiling still stops
 everything — that is what a ceiling is for.
 
+It needs a Claude Code new enough to take a `model` on a subagent launch, since
+that is the field being rewritten — if launches start erroring once it is on,
+`/cclimit downgrade off` puts them back.
+
 What it cannot do is move *your* session onto the cheaper model. A hook can
 rewrite the input of a tool call, which is where a subagent's model lives, and
 nothing in the hook interface can change the model of the session itself. So the
