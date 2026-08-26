@@ -227,10 +227,18 @@ and dropping to a cheaper model at the line instead of stopping. Both are next.
 
 The plugin is free and stays free. If it saved you a bill:
 
+<p align="center">
+  <a href="https://github.com/sponsors/epogonii"><img alt="Sponsor on GitHub" src="https://img.shields.io/badge/%E2%9D%A4%20Sponsor%20on%20GitHub-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white"></a>
+  <a href="https://www.paypal.com/paypalme/pogonii"><img alt="Buy me a coffee" src="https://img.shields.io/badge/%E2%98%95%20Buy%20me%20a%20coffee-003087?style=for-the-badge&logo=paypal&logoColor=white"></a>
+</p>
+
 | | |
 | --- | --- |
 | GitHub Sponsors | **[github.com/sponsors/epogonii](https://github.com/sponsors/epogonii)**, monthly or one time |
 | PayPal | **[paypal.me/pogonii](https://www.paypal.com/paypalme/pogonii)** |
+| Bitcoin | `bc1qe6fjj3uv23e2yx2ry3wwhyrl7s2pqshau7mga3` |
+| Ethereum | `0xDC9e1EfA0F8FAE71377F4018d4ff7D123369438e` |
+| Solana | `3sYQyR27CVz1VcwCfoDLUioaAHk8jspQaSDHXEvBALxg` |
 
 ---
 
