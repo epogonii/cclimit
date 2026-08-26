@@ -19,10 +19,12 @@ import {
   cheaperModel,
   burnRate,
   minutesTo,
+  alertSequence,
   breachMessage,
   noticeMessage,
   resumeMessage,
   downgradeMessage,
+  pct,
 } from './lib.mjs';
 
 function allow() {
@@ -32,6 +34,18 @@ function allow() {
 function emit(response) {
   process.stdout.write(JSON.stringify(response));
   process.exit(0);
+}
+
+// A stop that arrives mid-turn arrives while the user is somewhere else — that
+// is the situation this plugin exists for, and a message nobody is looking at
+// is not much better than no message. Claude Code emits the sequence on our
+// behalf.
+//
+// Nothing is added to the prompt paths on purpose: a blocked prompt lands a
+// second after the user pressed enter, and they are still watching the screen.
+function alerted(response, what) {
+  const seq = alertSequence(config, `${breach.label} usage ${pct(breach.used_percentage)} \u2014 ${what}`);
+  return seq ? { ...response, terminalSequence: seq } : response;
 }
 
 // Blocking a prompt otherwise echoes the prompt back under the reason, which
@@ -97,7 +111,6 @@ if (breach.kind === 'notice') {
       target,
       minutes: target === null ? null : minutesTo(breach.used_percentage, target, rate),
     }),
-    suppressOutput: true,
   });
 }
 
@@ -106,7 +119,7 @@ if (breach.kind === 'notice') {
 if (breach.kind === 'resume') {
   disarmResume(breach.window);
   clearBreach();
-  emit({ systemMessage: resumeMessage(breach), suppressOutput: true });
+  emit({ systemMessage: resumeMessage(breach) });
 }
 
 let threshold = null;
@@ -151,7 +164,6 @@ if (kind === 'line' && typeof config.downgrade === 'string') {
     emit({
       hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, model: target } },
       systemMessage: `cclimit: past your ${breach.label} line \u2014 this subagent runs on ${target}.`,
-      suppressOutput: true,
     });
   }
 
@@ -162,7 +174,7 @@ if (kind === 'line' && typeof config.downgrade === 'string') {
     const key = `downgrade:${breach.window}`;
     if (loadNotices()[key] === (breach.resets_at ?? 0)) allow();
     markNoticed(key, breach.resets_at);
-    emit({ systemMessage: downgradeMessage({ ...breach, threshold }, config), suppressOutput: true });
+    emit({ systemMessage: downgradeMessage({ ...breach, threshold }, config) });
   }
 
   allow();
@@ -184,18 +196,27 @@ if (isFanOut) {
 // be told about the line; the ceiling is not up for discussion.
 switch (kind === 'ceiling' ? 'stop' : config.action) {
   case 'warn':
-    emit({ systemMessage: message, suppressOutput: true });
+    emit(
+      event === 'PreToolUse'
+        ? alerted({ systemMessage: message }, 'past your line.')
+        : { systemMessage: message }
+    );
     break;
 
   case 'ask':
     if (event === 'PreToolUse') {
-      emit({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'ask',
-          permissionDecisionReason: message,
-        },
-      });
+      emit(
+        alerted(
+          {
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'ask',
+              permissionDecisionReason: message,
+            },
+          },
+          'cclimit needs an answer.'
+        )
+      );
     }
     // A prompt is not a permission decision, so there is nothing to ask about
     // here — the same block the stop action uses is the honest equivalent.
@@ -205,7 +226,7 @@ switch (kind === 'ceiling' ? 'stop' : config.action) {
   case 'stop':
   default:
     if (event === 'PreToolUse') {
-      emit({ continue: false, stopReason: message, suppressOutput: true });
+      emit(alerted({ continue: false, stopReason: message }, 'the turn stopped.'));
     }
     blockPrompt(message);
 }

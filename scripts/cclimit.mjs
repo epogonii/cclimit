@@ -331,6 +331,23 @@ function setAction(value) {
   out(`cclimit: on a breach it will now ${what}.`);
 }
 
+// How loud a stop is. Only tool calls ring it: a blocked prompt is read a
+// second after it was typed, and nobody needs a bell for that.
+function setAlert(valueRaw) {
+  const value = String(valueRaw || '').toLowerCase();
+  const allowed = ['off', 'bell', 'notify'];
+  if (!allowed.includes(value)) die(`Alert must be one of: ${allowed.join(', ')}`);
+  const config = loadConfig();
+  config.alert = value === 'off' ? null : value;
+  saveConfig(config);
+  const what = {
+    off: 'say nothing to the terminal',
+    bell: 'ring the terminal bell',
+    notify: 'ring the bell and raise a desktop notification where your terminal supports one',
+  }[value];
+  out(`cclimit: when it interrupts a tool call it will now ${what}.`);
+}
+
 // Keep the breach file honest after a config change, instead of waiting for the
 // next statusline render to catch up.
 // Off by default and stays off unless asked for by name: this is the one
@@ -571,6 +588,7 @@ function configTable() {
     ['Enabled', String(config.enabled), '/cclimit on \u00b7 /cclimit off'],
     ['At the line', config.action, '/cclimit action stop|ask|warn'],
     ['Downgrade instead of stopping', config.downgrade || 'off', `/cclimit downgrade ${DOWNGRADE_MODELS.join('|')}|off`],
+    ['Alert on a stop', config.alert || 'off', '/cclimit alert bell|notify|off'],
     [null, null, null],
   ];
 
@@ -629,6 +647,7 @@ else if (first === 'action') setAction(String(second || '').toLowerCase());
 else if (first === 'ceiling' && windowKey(second)) setCeiling(windowKey(second), args[2]);
 else if (first === 'notice' && windowKey(second)) setNotice(windowKey(second), args[2]);
 else if (first === 'downgrade') setDowngrade(args[1]);
+else if (first === 'alert') setAlert(args[1]);
 else if (first === 'config' && second === 'path') out(CONFIG_FILE);
 else if (first === 'config' || first === 'settings') configTable();
 else if (windowKey(first) && second !== undefined) setThreshold(windowKey(first), second);

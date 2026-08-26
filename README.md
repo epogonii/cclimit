@@ -113,6 +113,7 @@ If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11
 | `/cclimit go` | continue until the current window resets |
 | `/cclimit action stop\|ask\|warn` | what a crossing does — see below |
 | `/cclimit downgrade sonnet` | past the line, run subagents cheaper instead of stopping — `off` removes it |
+| `/cclimit alert bell\|notify\|off` | how loud an interruption is — `bell` by default |
 | `/cclimit config` | every setting and the command that changes it |
 | `/cclimit on` / `/cclimit off` | reinstate / disable, without uninstalling anything |
 | `/cclimit install` / `/cclimit uninstall` | wire the collector into the statusline, or remove it |
@@ -268,6 +269,31 @@ usage stands. For people who want the heads-up and not the brakes.
 
 All three describe what happens at the *line*. A ceiling always stops.
 
+## Being told when you are not looking
+
+```
+/cclimit alert bell          ring the terminal bell (the default)
+/cclimit alert notify        ring it and raise a desktop notification
+/cclimit alert off           say nothing to the terminal
+```
+
+An interruption arrives in the middle of a turn, which is exactly when you have
+gone to do something else — that is the situation the plugin is for, and a
+message nobody is looking at is not much better than no message. So a stop, an
+`ask` and a `warn` all ring the bell on their way out. A blocked *prompt*
+doesn't: you pressed enter a second ago and are still watching the screen.
+Neither does a heads-up, which is not an interruption.
+
+`notify` adds a desktop notification on terminals that have one: iTerm2, WezTerm,
+Windows Terminal and ConEmu through OSC 9, kitty through OSC 99, Ghostty, Warp
+and urxvt through OSC 777. Terminals outside that list — macOS Terminal.app
+among them — get the bell alone, because a terminal sent a sequence it does not
+recognise can print the payload as text instead of swallowing it.
+
+The plugin never writes to the terminal itself; hooks have no terminal to write
+to. It hands the sequence to Claude Code, which emits it. Claude Code only does
+this in an interactive session, so nothing rings under `claude -p`.
+
 ## Running cheaper instead of stopping
 
 ```
@@ -309,6 +335,7 @@ your line cost money, so set them lower than feels necessary.
   "ceilings": { "five_hour": null, "seven_day": null },
   "notices": { "five_hour": null, "seven_day": null },
   "downgrade": null,
+  "alert": "bell",
   "snoozeUntil": null,
   "maxStaleSeconds": 120
 }

@@ -46,9 +46,18 @@ function eq(actual, expected, what) {
   if (a !== e) throw new Error(`${what}: expected ${e}, got ${a}`);
 }
 
-function run(script, args = [], input = '') {
-  return spawnSync('node', [path.join(BIN, script), ...args], { input, env, encoding: 'utf8' });
+function run(script, args = [], input = '', extraEnv = null) {
+  return spawnSync('node', [path.join(BIN, script), ...args], {
+    input,
+    env: extraEnv ? { ...env, ...extraEnv } : env,
+    encoding: 'utf8',
+  });
 }
+
+// The terminal the suite itself is running in decides what a notification
+// should look like, so every check that cares about one says which terminal it
+// is pretending to be, starting from none of them.
+const NO_TERMINAL = { TERM_PROGRAM: '', TERM: 'dumb', WT_SESSION: '', ConEmuPID: '' };
 
 function cli(...args) {
   const res = run('cclimit.mjs', args);
@@ -86,9 +95,9 @@ function feedAgain(fiveHour, sevenDay, extra = {}) {
   return { res, payload };
 }
 
-function gate(event, extra = {}) {
+function gate(event, extra = {}, extraEnv = null) {
   const payload = JSON.stringify({ hook_event_name: event, session_id: 'test-session', ...extra });
-  const res = run('gate.mjs', [], payload);
+  const res = run('gate.mjs', [], payload, extraEnv);
   return res.stdout.trim() ? JSON.parse(res.stdout) : null;
 }
 
@@ -270,6 +279,87 @@ check('warn lets the call run and only says something', () => {
   eq(res.continue, undefined, 'continue');
   if (!/90%/.test(res.systemMessage)) throw new Error(`no percentage in: ${res.systemMessage}`);
   cli('action', 'stop');
+});
+
+const BELL = '\u0007';
+const tool = { tool_name: 'Bash', tool_input: { command: 'ls' } };
+
+// A stop lands mid-turn, which is when the user is least likely to be looking
+// at the terminal — the whole reason the plugin exists.
+check('a stop rings the bell', () => {
+  feed(90, 10);
+  const res = gate('PreToolUse', tool, NO_TERMINAL);
+  eq(res.terminalSequence, BELL, 'terminalSequence');
+});
+
+// The user pressed enter a second ago and is still watching the screen.
+check('a blocked prompt does not ring', () => {
+  feed(90, 10);
+  const res = gate('UserPromptSubmit', { prompt: 'keep going' }, NO_TERMINAL);
+  eq(res.terminalSequence, undefined, 'terminalSequence');
+});
+
+check('ask and warn ring on a tool call too', () => {
+  for (const action of ['ask', 'warn']) {
+    feed(90, 10);
+    cli('action', action);
+    eq(gate('PreToolUse', tool, NO_TERMINAL).terminalSequence, BELL, `terminalSequence under ${action}`);
+  }
+  cli('action', 'stop');
+});
+
+check('alert off says nothing to the terminal', () => {
+  feed(90, 10);
+  cli('alert', 'off');
+  eq(gate('PreToolUse', tool, NO_TERMINAL).terminalSequence, undefined, 'terminalSequence');
+  cli('alert', 'bell');
+});
+
+// A heads-up is not an interruption: it is printed above work that carries on.
+check('a notice does not ring', () => {
+  cli('notice', '5h', '70');
+  feed(75, 10);
+  const res = gate('PreToolUse', tool, NO_TERMINAL);
+  eq(res.terminalSequence, undefined, 'terminalSequence');
+  cli('notice', '5h', 'off');
+});
+
+check('notify adds a notification the terminal understands', () => {
+  cli('alert', 'notify');
+  feed(90, 10);
+
+  const iterm = gate('PreToolUse', tool, { ...NO_TERMINAL, TERM_PROGRAM: 'iTerm.app' }).terminalSequence;
+  if (!iterm.startsWith(`${BELL}\u001b]9;cclimit: 5h usage 90%`)) {
+    throw new Error(`not an OSC 9 notification: ${JSON.stringify(iterm)}`);
+  }
+
+  const kitty = gate('PreToolUse', tool, { ...NO_TERMINAL, TERM: 'xterm-kitty' }).terminalSequence;
+  if (!kitty.startsWith(`${BELL}\u001b]99;;cclimit:`)) {
+    throw new Error(`not an OSC 99 notification: ${JSON.stringify(kitty)}`);
+  }
+
+  // Sending a terminal a sequence it does not know can print the payload as
+  // text, so an unrecognised one gets the bell and nothing else.
+  eq(gate('PreToolUse', tool, NO_TERMINAL).terminalSequence, BELL, 'unknown terminal');
+  cli('alert', 'bell');
+});
+
+// Claude Code drops the whole field if any part of it is outside its
+// allowlist, so a stray CSI would silently cost the bell as well.
+check('the alert never leaves the allowlist', () => {
+  cli('alert', 'notify');
+  feed(90, 10);
+  for (const term of ['iTerm.app', 'WezTerm', 'ghostty', 'WarpTerminal']) {
+    const seq = gate('PreToolUse', tool, { ...NO_TERMINAL, TERM_PROGRAM: term }).terminalSequence;
+    for (const part of seq.split('\u001b]').slice(1)) {
+      const code = part.split(';')[0];
+      if (!['0', '1', '2', '9', '99', '777'].includes(code)) {
+        throw new Error(`OSC ${code} is not allowlisted, from ${term}`);
+      }
+    }
+    if (/\u001b[^\]\\]/.test(seq)) throw new Error(`not an OSC sequence: ${JSON.stringify(seq)}`);
+  }
+  cli('alert', 'bell');
 });
 
 // The user's escape hatches are slash commands, and a slash command reaches

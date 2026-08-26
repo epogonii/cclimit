@@ -50,6 +50,12 @@ export const DEFAULTS = {
   // stopping there. Off by default: quietly changing which model does the work
   // is a bigger thing to do unasked than declining to do it at all.
   downgrade: null,
+  // How to make an interruption noticeable when nobody is watching the
+  // terminal. `bell` rings it, `notify` adds a desktop notification where the
+  // terminal understands one, `off` says nothing. On by default at `bell`,
+  // because the whole point of a line is to be told when it is reached, and a
+  // stop that arrives mid-turn arrives while the user is somewhere else.
+  alert: 'bell',
   // Set by `/cclimit go` to a unix timestamp — usually the reset time of the
   // window that fired. Until then the gates stay quiet.
   snoozeUntil: null,
@@ -619,6 +625,47 @@ export function localTime(resetsAt) {
     month: 'short',
     hour12: false,
   });
+}
+
+// Which desktop-notification escape sequence this terminal understands, or
+// null. There is no common one: each terminal family invented its own OSC, and
+// a terminal sent a sequence it does not know may print the payload as text
+// instead of swallowing it. So this answers only for terminals it recognises,
+// and everything else settles for the bell.
+function notifySequence(title, body, env = process.env) {
+  const program = env.TERM_PROGRAM || '';
+  const term = env.TERM || '';
+  const bel = '\u0007';
+
+  // kitty's own protocol. The two empty parameters are the notification id and
+  // the "this is the whole payload" flag, both of which default correctly.
+  if (term.includes('kitty')) return `\u001b]99;;${title}: ${body}\u001b\\`;
+
+  if (program === 'ghostty' || term.includes('ghostty') || program === 'WarpTerminal' || term.startsWith('rxvt')) {
+    return `\u001b]777;notify;${title};${body}${bel}`;
+  }
+
+  // OSC 9 is the oldest and the widest: iTerm2 invented it and ConEmu, Windows
+  // Terminal and WezTerm all took it.
+  if (program === 'iTerm.app' || program === 'WezTerm' || env.WT_SESSION || env.ConEmuPID) {
+    return `\u001b]9;${title}: ${body}${bel}`;
+  }
+
+  return null;
+}
+
+// What to put in `terminalSequence` when the gate interrupts a turn, or null.
+// Claude Code emits this on the hook's behalf — a hook has no controlling
+// terminal of its own — and drops the whole field if any part of it falls
+// outside its allowlist of OSC 0/1/2/9/99/777 and BEL.
+export function alertSequence(config, body) {
+  const mode = config?.alert;
+  if (mode !== 'bell' && mode !== 'notify') return null;
+  const bell = '\u0007';
+  if (mode === 'bell') return bell;
+  // The bell goes out either way: a notification that the terminal silently
+  // dropped would leave nothing at all.
+  return bell + (notifySequence('cclimit', body, process.env) || '');
 }
 
 // What to do about a breach, one command to a line. Run together in a sentence
