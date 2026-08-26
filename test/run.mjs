@@ -1030,6 +1030,39 @@ check('the next window to fill up is announced in its turn', () => {
   resetResume();
 });
 
+check('a window already back over the line is not announced as free', () => {
+  resetResume();
+  feedWindows(85, NOW + 60, 10, NOW + 86400);
+  // A new window that filled straight back up: the line has its own thing to
+  // say about that, and the reset is no longer the news.
+  feedWindows(90, NOW + 3600, 10, NOW + 86400);
+  eq(breachFile()?.kind, 'line', 'breach kind');
+});
+
+check('an unreadable resume file is a missed sentence, never a block', () => {
+  resetResume();
+  feedWindows(85, NOW + 60, 10, NOW + 86400);
+  feedWindows(4, NOW + 3600, 10, NOW + 86400);
+  eq(breachFile()?.kind, 'resume', 'breach kind');
+
+  // Corrupted after it was armed and before anyone read it: the sentence is
+  // lost, which is the whole cost of it.
+  fs.writeFileSync(path.join(STATE, 'resume.json'), 'not json {{');
+  feedWindows(5, NOW + 3600, 10, NOW + 86400);
+  eq(breachFile(), null, 'breach file');
+  eq(gate('UserPromptSubmit', { prompt: 'carry on' }), null, 'prompt');
+  resetResume();
+});
+
+check('a resume file that cannot be parsed is rewritten rather than kept', () => {
+  resetResume();
+  fs.writeFileSync(path.join(STATE, 'resume.json'), 'not json {{');
+  feedWindows(85, NOW + 60, 10, NOW + 86400);
+  feedWindows(4, NOW + 3600, 10, NOW + 86400);
+  eq(breachFile()?.kind, 'resume', 'breach kind');
+  resetResume();
+});
+
 // --- running cheaper instead of stopping ------------------------------------
 
 function downgradeOff() {
