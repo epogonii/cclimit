@@ -32,11 +32,6 @@ Neither one asks you first. The built-in machinery is all reactive: a
 prompt for extra usage, a monthly spend cap. Nothing watches the percentage climb
 and stops at a line you drew.
 
-Requests for exactly this ([#47111](https://github.com/anthropics/claude-code/issues/47111),
-[#38380](https://github.com/anthropics/claude-code/issues/38380),
-[#47157](https://github.com/anthropics/claude-code/issues/47157)) are closed as
-not planned. Hence this.
-
 ## What it does
 
 You set a line. Usage crosses it. The next thing Claude Code tries to do stops:
