@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.3
+
+- The message a stop prints is laid out to be read at a glance: the facts on
+  their own lines, and the three commands in a column, one to a line, instead of
+  run together in a sentence with em-dashes between them.
+- A wait is quoted in hours rather than minutes, so a ceiling half a day away
+  reads `30h 35m` instead of `1835m`.
+- The statusline repair rewrites the lookup on the line it found it on. 0.1.1
+  wrote it as the fallback half of a test rather than on a line of its own, and
+  a two-line replacement there would have left the second line running
+  unconditionally and cleared the pinned path it was meant to keep.
+- The demo drops a letter that was not there: the pixel font drew `N` in three
+  cells, which is the same shape as an `M`, so the idle screen read `MO LIME`.
+
 ## 0.5.2
 
 - The executables moved out of `bin/` into `scripts/`. A plugin with a
