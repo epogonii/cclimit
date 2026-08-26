@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.5.0
+
+- The window announces its own reset. Whatever stopped you turns over on its
+  own, and the last thing said about it was that it was full — so the first
+  prompt after the reset gets one line saying it is not, what it was before,
+  and where the next line sits. A window that never reached its notice or its
+  line resets in silence, and the announcement is made once, against the new
+  window's reset time.
+- `/cclimit downgrade sonnet` answers the line by moving work onto a cheaper
+  model instead of stopping. Off unless asked for. Every subagent started past
+  the line has its model rewritten to the cheaper one; an already-cheaper call
+  is left alone, an ordinary tool call runs untouched, and a ceiling still
+  stops everything. Nothing in the hook interface can change the model of the
+  session itself, so the prompt is told once — with the `/model` line to type —
+  rather than pretending otherwise.
+- `status` now projects where the window lands at the current rate, for as long
+  as the reset is close enough for that rate to mean anything about it. A rate
+  that rounds to nothing, or a target the window will reset long before, is left
+  unsaid rather than dressed up as a number.
+- `status` also draws the last hour of spending as a sparkline, built from what
+  was spent inside each cell rather than the total it stood at — a climbing
+  total drawn as a level is a ramp, and a ramp says nothing about when the
+  spending happened. The trail kept behind the readings grew from ten minutes
+  to an hour to feed it.
+- `/cclimit config` prints every setting with the command that changes it. A
+  plugin command runs without a terminal of its own, so the arrow-key settings
+  screen Claude Code has for itself cannot exist here; the table shows what to
+  type instead of hiding it behind a key press. `/cclimit config path` still
+  prints the file.
+
 ## 0.4.1
 
 - `status` redrawn: each window is a bar with a tick where the work stops,
