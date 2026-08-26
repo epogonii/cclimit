@@ -53,9 +53,13 @@ and stops at a line you drew.
 You set a line. Usage crosses it. The next thing Claude Code tries to do stops:
 
 ```
-cclimit: 5h usage hit 87% of your plan (your limit: 85%). Stopped before running Bash.
-Window resets Aug 26, 14:20 (in 42m).
-Continue until the window resets: /cclimit go — raise the line: /cclimit 5h 92 — turn it off: /cclimit off
+cclimit: 5h usage hit 87% of your plan (your limit: 85%).
+Stopped before running Bash. Window resets Aug 26, 14:20 (in 42m).
+
+  /cclimit go      continue until the window resets
+  /cclimit 5h 92   raise the line
+  /cclimit off     turn cclimit off
+
 The turn ends here either way: ask for the work again afterwards.
 ```
 
@@ -183,8 +187,9 @@ while you are not watching. With one, you can leave.
 While a ceiling is set, the stop at the line says how much room is left:
 
 ```
-cclimit: 5h usage hit 85% of your plan (your limit: 85%). Stopped before running Bash.
-Window resets Aug 26, 14:20 (in 42m). Your ceiling is 99%, about 14m away at the current rate.
+cclimit: 5h usage hit 85% of your plan (your limit: 85%).
+Stopped before running Bash. Window resets Aug 26, 14:20 (in 42m).
+Your ceiling is 99%, about 14m away at the current rate.
 ```
 
 That estimate is measured, not guessed: cclimit keeps the last few dozen
@@ -252,8 +257,9 @@ is gone, not paused: `/cclimit go` lifts the line for what comes next, it does
 not resume what was interrupted, so ask for the work again afterwards. If
 losing the turn is the part you mind, `ask` is the action that keeps it.
 
-**`ask`** — the tool call is routed to the normal permission prompt, so you get
-allow/deny in the moment. Be aware of what this costs: a permission answer
+**`ask`** — the tool call is routed to the normal permission prompt: the box at
+the bottom of the terminal, answered with the arrow keys, with the reason for
+the stop printed inside it. You get allow/deny in the moment. Be aware of what this costs: a permission answer
 applies to that one call. The next tool call asks again. That is a property of
 the permission system, not a bug here — it is why `stop` is the default.
 

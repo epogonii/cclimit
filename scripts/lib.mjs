@@ -591,11 +591,20 @@ export function untilReset(resetsAt, now = Math.floor(Date.now() / 1000)) {
   if (!Number.isFinite(resetsAt) || resetsAt <= 0) return null;
   const seconds = resetsAt - now;
   if (seconds <= 0) return 'any moment now';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  if (hours && minutes) return `${hours}h ${minutes}m`;
+  return span(seconds / 60);
+}
+
+// A stretch of time, said the way a person would say it. Left in minutes, a
+// long wait comes out as `1835m`, which has to be divided before it means
+// anything.
+export function span(minutes) {
+  if (!Number.isFinite(minutes)) return null;
+  const whole = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(whole / 60);
+  const rest = whole % 60;
+  if (hours && rest) return `${hours}h ${rest}m`;
   if (hours) return `${hours}h`;
-  return `${minutes}m`;
+  return `${rest}m`;
 }
 
 export function localTime(resetsAt) {
@@ -610,6 +619,15 @@ export function localTime(resetsAt) {
     month: 'short',
     hour12: false,
   });
+}
+
+// What to do about a breach, one command to a line. Run together in a sentence
+// they are three clauses that have to be taken apart before any of them can be
+// typed, and the whole message is read by someone who has just been
+// interrupted; in a column they are read at a glance and copied whole.
+function options(rows) {
+  const width = Math.max(...rows.map(([command]) => command.length));
+  return rows.map(([command, what]) => `  ${command.padEnd(width)}   ${what}`).join('\n');
 }
 
 // The sentence every gate shows. One line of fact, one line of what to do, and
@@ -631,15 +649,26 @@ export function breachMessage(breach, config, { tool, headroom } = {}) {
   // Under `ask` the tool call goes to the permission prompt and the turn is
   // still alive, so only a real stop gets this line.
   const again =
-    ceiling || config.action === 'stop' ? `\nThe turn ends here either way: ask for the work again afterwards.` : '';
+    ceiling || config.action === 'stop'
+      ? `\n\nThe turn ends here either way: ask for the work again afterwards.`
+      : '';
 
   if (ceiling) {
     return (
-      `cclimit: ${breach.label} usage hit ${pct(breach.used_percentage)} of your plan — your ceiling, ` +
-      `which is the number /cclimit go does not lift.${where}${reset}\n` +
-      `Raise it: /cclimit ceiling ${breach.label} ${Math.min(100, Math.ceil(breach.used_percentage) + 1)} — ` +
-      `remove it: /cclimit ceiling ${breach.label} off — ` +
-      `turn cclimit off: /cclimit off${again}`
+      [
+        `cclimit: ${breach.label} usage hit ${pct(breach.used_percentage)} of your plan — your ceiling, ` +
+          `which is the number /cclimit go does not lift.`,
+        `${where}${reset}`.trim(),
+      ]
+        .filter(Boolean)
+        .join('\n') +
+      `\n\n` +
+      options([
+        [`/cclimit ceiling ${breach.label} ${Math.min(100, Math.ceil(breach.used_percentage) + 1)}`, 'raise the ceiling'],
+        [`/cclimit ceiling ${breach.label} off`, 'remove the ceiling'],
+        ['/cclimit off', 'turn cclimit off'],
+      ]) +
+      again
     );
   }
 
@@ -647,15 +676,25 @@ export function breachMessage(breach, config, { tool, headroom } = {}) {
   // with a ceiling set it buys a known amount of work, not the rest of the
   // window.
   const stops = typeof headroom?.ceiling === 'number' ? ` Your ceiling is ${headroom.ceiling}%` : '';
-  const away = stops && typeof headroom.minutes === 'number' ? `, about ${headroom.minutes}m away at the current rate` : '';
-  const guard = stops ? `${stops}${away}.` : '';
+  const away = stops && typeof headroom.minutes === 'number' ? `, about ${span(headroom.minutes)} away at the current rate` : '';
+  const guard = stops ? `${stops}${away}.`.trim() : '';
+
+  const head = [
+    `cclimit: ${breach.label} usage ${verb} ${pct(breach.used_percentage)} of your plan (your limit: ${breach.threshold}%).`,
+    `${where}${reset}`.trim(),
+    guard,
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   return (
-    `cclimit: ${breach.label} usage ${verb} ${pct(breach.used_percentage)} of your plan ` +
-    `(your limit: ${breach.threshold}%).${where}${reset}${guard ? ` ${guard}` : ''}\n` +
-    `Continue until the window resets: /cclimit go — ` +
-    `raise the line: /cclimit ${breach.label} ${Math.min(100, Math.ceil(breach.used_percentage) + 5)} — ` +
-    `turn it off: /cclimit off${again}`
+    `${head}\n\n` +
+    options([
+      ['/cclimit go', 'continue until the window resets'],
+      [`/cclimit ${breach.label} ${Math.min(100, Math.ceil(breach.used_percentage) + 5)}`, 'raise the line'],
+      ['/cclimit off', 'turn cclimit off'],
+    ]) +
+    again
   );
 }
 
@@ -664,7 +703,7 @@ export function breachMessage(breach, config, { tool, headroom } = {}) {
 export function noticeMessage(breach, { target, minutes } = {}) {
   const at = localTime(breach.resets_at);
   const reset = at ? ` Window resets ${at} (in ${untilReset(breach.resets_at)}).` : '';
-  const eta = typeof minutes === 'number' ? `, about ${minutes}m away at the current rate` : '';
+  const eta = typeof minutes === 'number' ? `, about ${span(minutes)} away at the current rate` : '';
   const wall = typeof target === 'number' ? ` Work stops at ${target}%${eta}.` : '';
   return (
     `cclimit: ${breach.label} usage is at ${pct(breach.used_percentage)} of your plan.${wall}${reset}\n` +

@@ -693,6 +693,44 @@ check('a trail too short or too flat produces no estimate at all', () => {
   ceilingOff();
 });
 
+// A stop is read by someone who has just been interrupted, so the message has
+// to be scannable: the facts on their own lines, the commands in a column.
+check('the stop message puts one command on each line', () => {
+  ceilingOff();
+  feed(90, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const lines = String(res.stopReason).split('\n');
+  const commands = lines.filter((line) => /^ {2}\/cclimit /.test(line));
+  eq(commands.length, 3, 'three commands, one to a line');
+  // Aligned, so the descriptions read as a column rather than as ragged prose.
+  const columns = new Set(commands.map((line) => line.match(/^ {2}\S.*?\s{2,}/)[0].length));
+  eq(columns.size, 1, 'the descriptions start at the same column');
+  if (!/^cclimit: 5h usage hit .*\(your limit: \d+%\)\.$/.test(lines[0])) {
+    throw new Error(`the first line is not the fact on its own: ${lines[0]}`);
+  }
+  if (/\u2014 raise the line|\u2014 turn it off/.test(res.stopReason)) {
+    throw new Error(`the commands are still run together: ${res.stopReason}`);
+  }
+});
+
+// `740m` has to be divided before it means anything, and the person reading it
+// has just been stopped mid-task.
+check('a long wait is quoted in hours', () => {
+  ceilingOff();
+  cli('5h', '20');
+  cli('ceiling', '5h', '95');
+  // A tenth of a point a minute, 74 points of headroom: 740 minutes.
+  writeHistory(Array.from({ length: 11 }, (_, i) => ({ ts: NOW - (10 - i) * 60, five_hour: 20 + i / 10, seven_day: 10 })));
+  feed(21, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (!/about 12h \d+m away at the current rate/.test(res.stopReason)) {
+    throw new Error(`the wait is not in hours: ${res.stopReason}`);
+  }
+  ceilingOff();
+  cli('5h', '85');
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
 check('status shows the ceiling and the climb', () => {
   ceilingOff();
   cli('ceiling', '5h', '95');
