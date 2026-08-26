@@ -7,6 +7,7 @@
   A pending heads-up is no longer reported there as if it were holding work.
 
 ## 0.4.0
+
 - Notices. `/cclimit notice 5h 75` says something at 75% while the line still
   stops at 80%, so the stop is not the first news that usage was climbing. It
   blocks nothing, decides nothing, and is off until you set one.
