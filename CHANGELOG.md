@@ -11,8 +11,9 @@
   wrote it as the fallback half of a test rather than on a line of its own, and
   a two-line replacement there would have left the second line running
   unconditionally and cleared the pinned path it was meant to keep.
-- The demo drops a letter that was not there: the pixel font drew `N` in three
-  cells, which is the same shape as an `M`, so the idle screen read `MO LIME`.
+- The demo says what it means. The pixel font drew `N` in three cells, which is
+  the same shape as an `M`, so the idle screen read `MO LIME`; `N` and `M` are
+  five cells wide now and the screen agrees with its own caption: `NO LIMIT`.
 
 ## 0.5.2
 
