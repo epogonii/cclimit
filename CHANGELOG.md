@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+- The statusline wrapper no longer depends on the collector staying where it
+  was at install time. A plugin update moves it into a directory named after
+  the new version; the wrapper now searches the plugin cache when the recorded
+  path is gone, and passes the payload straight through to your own statusline
+  when it cannot find the collector at all. Updating cclimit can no longer
+  leave you without a statusline.
+- The wordmark is centred against the gauge rather than sharing its baseline.
+
 ## 0.1.0
 
 First release.

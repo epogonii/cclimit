@@ -365,10 +365,35 @@ check('install adds its own statusline when there is none', () => {
   fs.writeFileSync(settingsFile, JSON.stringify({ model: 'opus' }, null, 2));
   cli('install');
   const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-  if (!settings.statusLine.command.includes('--render')) throw new Error(`unexpected command: ${settings.statusLine.command}`);
+  if (!settings.statusLine.command.includes('cclimit')) throw new Error(`unexpected command: ${settings.statusLine.command}`);
+  const wrapper = fs.readFileSync(path.join(STATE, 'statusline-wrap.sh'), 'utf8');
+  if (!wrapper.includes('--render')) throw new Error(`collector not asked to render: ${wrapper}`);
   cli('uninstall');
   const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
   eq(after.statusLine, undefined, 'statusLine after uninstall');
+});
+
+// A plugin update moves the collector into a directory named after the new
+// version, so the path recorded at install time stops existing. Whatever else
+// that costs, it must not cost the user their statusline.
+check('the wrapper still runs the statusline when the collector has moved', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  fs.writeFileSync(settingsFile, JSON.stringify({ statusLine: { type: 'command', command: 'cat' } }, null, 2));
+  cli('install');
+
+  const wrapper = fs.readFileSync(path.join(STATE, 'statusline-wrap.sh'), 'utf8');
+  if (!/ls -1dt .*plugins\/cache/.test(wrapper)) throw new Error(`no search for a moved collector: ${wrapper}`);
+
+  // Point it at a collector that is not there and hide the plugin cache, which
+  // is what an uninstalled or renamed version directory looks like from here.
+  const moved = path.join(STATE, 'moved-wrap.sh');
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'cclimit-empty-'));
+  fs.writeFileSync(moved, wrapper.replace(/^SINK=.*$/m, `SINK='${path.join(empty, 'gone.mjs')}'`), { mode: 0o755 });
+
+  const run = spawnSync('sh', [moved], { input: 'payload from claude code', encoding: 'utf8', env: { ...process.env, HOME: empty } });
+  eq(run.status, 0, 'exit status');
+  eq(run.stdout, 'payload from claude code', 'statusline output');
+  cli('uninstall');
 });
 
 check('uninstall restores a statusline install did not understand', () => {

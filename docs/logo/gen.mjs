@@ -70,8 +70,12 @@ function build(ink, background) {
   const markY = 32;
   parts.push(...rects(MARK, markX, markY, ink));
 
-  // Wordmark, one empty column between glyphs.
-  const textY = 56;
+  // Wordmark, one empty column between glyphs. The gauge's blank first and last
+  // rows are not ink, so its ink runs from markY + CELL to markY + 10 * CELL;
+  // centring the seven rows of letters on that is one cell above the gauge's
+  // own top-left corner. Aligning the two boxes instead leaves the word sitting
+  // a cell low, which is what it looked like.
+  const textY = markY + CELL * 2;
   let x = markX + (MARK[0].length + 2) * CELL;
   for (const ch of 'cclimit') {
     const glyph = FONT[ch];
