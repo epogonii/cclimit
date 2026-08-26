@@ -205,6 +205,11 @@ ever held.
   overshoot is still fine.
 - **It depends on the statusline rendering.** No render, no fresh reading, and
   after `maxStaleSeconds` cclimit stops holding anything. That is deliberate.
+- **A ceiling is held the same way, and is worth no more than the last
+  reading.** It is a brake, not a guarantee: it fails open exactly like the
+  line, so a session whose statusline has stopped rendering is a session with no
+  ceiling. Leaving work unattended is safe against overshoot, not against the
+  plugin being unable to see.
 - **The percentages are the ones Claude Code publishes**, rounded from floats
   like `56.00000000000001`. Comparison is `>=`, so a line at 85 fires at exactly
   85.0.
