@@ -284,11 +284,23 @@ message nobody is looking at is not much better than no message. So a stop, an
 doesn't: you pressed enter a second ago and are still watching the screen.
 Neither does a heads-up, which is not an interruption.
 
-`notify` adds a desktop notification on terminals that have one: iTerm2, WezTerm,
-Windows Terminal and ConEmu through OSC 9, kitty through OSC 99, Ghostty, Warp
-and urxvt through OSC 777. Terminals outside that list — macOS Terminal.app
-among them — get the bell alone, because a terminal sent a sequence it does not
-recognise can print the payload as text instead of swallowing it.
+The bell works everywhere. `notify` adds a desktop notification on the terminals
+that have one:
+
+| | |
+| --- | --- |
+| OSC 9 | iTerm2, WezTerm, Windows Terminal, ConEmu |
+| OSC 99 | kitty |
+| OSC 777 | Ghostty, Warp, foot, urxvt |
+
+Anything else gets the bell alone, because a terminal sent a sequence it does
+not recognise can print the payload as text instead of swallowing it. That
+includes macOS Terminal.app, Alacritty, xterm, Konsole, and GNOME Terminal and
+the rest of the VTE family — OSC 777 reached VTE as a distribution patch rather
+than upstream, so the same terminal answers it on one machine and ignores it on
+the next, and a hook has no way to tell which. Inside tmux or screen it is the
+bell as well: passing an OSC through to the outer terminal needs a wrapper that
+is not on the allowlist.
 
 The plugin never writes to the terminal itself; hooks have no terminal to write
 to. It hands the sequence to Claude Code, which emits it. Claude Code only does

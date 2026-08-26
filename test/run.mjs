@@ -338,9 +338,27 @@ check('notify adds a notification the terminal understands', () => {
     throw new Error(`not an OSC 99 notification: ${JSON.stringify(kitty)}`);
   }
 
+  // Outside macOS almost nothing sets TERM_PROGRAM, so TERM has to be enough
+  // on its own for the terminals that ship on Linux.
+  for (const [term, osc] of [
+    ['xterm-ghostty', '777'],
+    ['rxvt-unicode-256color', '777'],
+    ['foot-extra', '777'],
+    ['wezterm', '9'],
+  ]) {
+    const seq = gate('PreToolUse', tool, { ...NO_TERMINAL, TERM: term }).terminalSequence;
+    if (!seq.startsWith(`${BELL}\u001b]${osc};`)) {
+      throw new Error(`TERM=${term} did not reach OSC ${osc}: ${JSON.stringify(seq)}`);
+    }
+  }
+
   // Sending a terminal a sequence it does not know can print the payload as
-  // text, so an unrecognised one gets the bell and nothing else.
-  eq(gate('PreToolUse', tool, NO_TERMINAL).terminalSequence, BELL, 'unknown terminal');
+  // text, so an unrecognised one gets the bell and nothing else. GNOME Terminal
+  // is the case worth naming: OSC 777 reached VTE as a distribution patch, so
+  // the same terminal answers it on one machine and ignores it on the next.
+  for (const env of [NO_TERMINAL, { ...NO_TERMINAL, TERM: 'xterm-256color', VTE_VERSION: '7600' }]) {
+    eq(gate('PreToolUse', tool, env).terminalSequence, BELL, `terminalSequence for ${JSON.stringify(env)}`);
+  }
   cli('alert', 'bell');
 });
 
@@ -349,12 +367,22 @@ check('notify adds a notification the terminal understands', () => {
 check('the alert never leaves the allowlist', () => {
   cli('alert', 'notify');
   feed(90, 10);
-  for (const term of ['iTerm.app', 'WezTerm', 'ghostty', 'WarpTerminal']) {
-    const seq = gate('PreToolUse', tool, { ...NO_TERMINAL, TERM_PROGRAM: term }).terminalSequence;
+  const terminals = [
+    { TERM_PROGRAM: 'iTerm.app' },
+    { TERM_PROGRAM: 'WezTerm' },
+    { TERM_PROGRAM: 'ghostty' },
+    { TERM_PROGRAM: 'WarpTerminal' },
+    { TERM: 'xterm-kitty' },
+    { TERM: 'rxvt-unicode-256color' },
+    { TERM: 'foot' },
+    { WT_SESSION: '1' },
+  ];
+  for (const term of terminals) {
+    const seq = gate('PreToolUse', tool, { ...NO_TERMINAL, ...term }).terminalSequence;
     for (const part of seq.split('\u001b]').slice(1)) {
       const code = part.split(';')[0];
       if (!['0', '1', '2', '9', '99', '777'].includes(code)) {
-        throw new Error(`OSC ${code} is not allowlisted, from ${term}`);
+        throw new Error(`OSC ${code} is not allowlisted, from ${JSON.stringify(term)}`);
       }
     }
     if (/\u001b[^\]\\]/.test(seq)) throw new Error(`not an OSC sequence: ${JSON.stringify(seq)}`);

@@ -632,6 +632,14 @@ export function localTime(resetsAt) {
 // a terminal sent a sequence it does not know may print the payload as text
 // instead of swallowing it. So this answers only for terminals it recognises,
 // and everything else settles for the bell.
+//
+// Most terminals outside macOS never set TERM_PROGRAM, so TERM has to carry the
+// answer on its own for the ones that ship on Linux.
+//
+// Deliberately not here: GNOME Terminal and the rest of the VTE family. OSC 777
+// reached VTE as a distribution patch rather than upstream, so the same
+// terminal answers it on one machine and ignores it on the next, and there is
+// no way to tell which from inside a hook. They get the bell.
 function notifySequence(title, body, env = process.env) {
   const program = env.TERM_PROGRAM || '';
   const term = env.TERM || '';
@@ -641,13 +649,27 @@ function notifySequence(title, body, env = process.env) {
   // the "this is the whole payload" flag, both of which default correctly.
   if (term.includes('kitty')) return `\u001b]99;;${title}: ${body}\u001b\\`;
 
-  if (program === 'ghostty' || term.includes('ghostty') || program === 'WarpTerminal' || term.startsWith('rxvt')) {
+  // OSC 777 started as an urxvt extension and was taken up by terminals that
+  // grew up on Linux.
+  if (
+    program === 'ghostty' ||
+    term.includes('ghostty') ||
+    program === 'WarpTerminal' ||
+    term.startsWith('rxvt') ||
+    term.startsWith('foot')
+  ) {
     return `\u001b]777;notify;${title};${body}${bel}`;
   }
 
   // OSC 9 is the oldest and the widest: iTerm2 invented it and ConEmu, Windows
   // Terminal and WezTerm all took it.
-  if (program === 'iTerm.app' || program === 'WezTerm' || env.WT_SESSION || env.ConEmuPID) {
+  if (
+    program === 'iTerm.app' ||
+    program === 'WezTerm' ||
+    term.includes('wezterm') ||
+    env.WT_SESSION ||
+    env.ConEmuPID
+  ) {
     return `\u001b]9;${title}: ${body}${bel}`;
   }
 
