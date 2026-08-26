@@ -94,9 +94,8 @@ The collector copies stdin through untouched, so your statusline looks exactly
 as it did, and writes the two percentages to `~/.claude/cclimit/`.
 `settings.json` is backed up to `settings.json.cclimit-backup` first, your
 `padding` is preserved, and `refreshInterval` is set to 10s if it was missing
-or slower than 30s,
-because a reading nobody refreshes goes stale and cclimit ignores stale
-readings.
+or slower than 30s, because a reading nobody refreshes goes stale and cclimit
+ignores stale readings.
 
 If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11%`.
 
