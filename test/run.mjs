@@ -672,6 +672,106 @@ check('every subcommand the plugin prints at the user has a command file', () =>
   }
 });
 
+// --- handing over to a newer install ---------------------------------------
+//
+// Claude Code resolves the plugin directory once per session, so without this a
+// fix only reaches a running session after a restart.
+
+const FAKE_BIN = path.join(CONFIG, 'plugins', 'cache', 'market', 'cclimit', '9.9.9', 'bin');
+
+function plantNewer(file, body, { newer = true } = {}) {
+  fs.mkdirSync(FAKE_BIN, { recursive: true });
+  // A copy is only trusted if it looks whole, so a plausible one needs the
+  // module its real counterpart imports.
+  fs.writeFileSync(path.join(FAKE_BIN, 'lib.mjs'), 'export const planted = true;\n');
+  const target = path.join(FAKE_BIN, file);
+  fs.writeFileSync(target, body, { mode: 0o755 });
+  const own = fs.statSync(path.join(BIN, file)).mtime;
+  const when = new Date(own.getTime() + (newer ? 60_000 : -60_000));
+  fs.utimesSync(target, when, when);
+  return target;
+}
+
+function unplant() {
+  fs.rmSync(path.join(CONFIG, 'plugins'), { recursive: true, force: true });
+}
+
+check('a command hands over to the copy installed after it', () => {
+  plantNewer('cclimit.mjs', "process.stdout.write('from the newer copy: ' + process.argv.slice(2).join(' ') + '\\n');\n");
+  const text = cli('status');
+  eq(text, 'from the newer copy: status\n', 'stdout');
+  unplant();
+});
+
+check('an older copy left in the cache is never handed over to', () => {
+  plantNewer('cclimit.mjs', "process.stdout.write('from the older copy\\n');\n", { newer: false });
+  const text = cli('status');
+  if (/older copy/.test(text)) throw new Error(`handed over to an older version: ${text}`);
+  unplant();
+});
+
+check('handing over happens once and cannot recurse', () => {
+  // A newer copy that would itself hand over, if the guard did not stop it.
+  plantNewer('cclimit.mjs', "process.stdout.write((process.env.CCLIMIT_NO_FORWARD ? 'guarded' : 'unguarded') + '\\n');\n");
+  eq(cli('status'), 'guarded\n', 'stdout');
+  unplant();
+});
+
+// An update caught halfway is the realistic failure, and the escape hatches are
+// the worst possible thing to lose to it.
+check('a newer copy that does not parse is left alone', () => {
+  plantNewer('cclimit.mjs', 'this file is not javascript at all\n');
+  const text = cli('status');
+  if (!/cclimit is/.test(text)) throw new Error(`no answer from the working copy: ${text}`);
+  unplant();
+});
+
+check('a newer copy missing the module it imports is left alone', () => {
+  plantNewer('cclimit.mjs', "process.stdout.write('from the half-installed copy\\n');\n");
+  fs.rmSync(path.join(FAKE_BIN, 'lib.mjs'), { force: true });
+  const text = cli('status');
+  if (/half-installed/.test(text)) throw new Error(`handed over to a partial install: ${text}`);
+  if (!/cclimit is/.test(text)) throw new Error(`no answer from the working copy: ${text}`);
+  unplant();
+});
+
+check('a gate that does not parse is left alone', () => {
+  feed(90, 10);
+  plantNewer('gate.mjs', 'neither is this\n');
+  const res = spawnSync(path.join(BIN, 'gate.sh'), [], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+    env,
+    encoding: 'utf8',
+  });
+  eq(JSON.parse(res.stdout).continue, false, 'continue');
+  if (!/90%/.test(JSON.parse(res.stdout).stopReason)) throw new Error(`no real decision: ${res.stdout}`);
+  unplant();
+});
+
+check('the gate hands over to the decision the newer copy would make', () => {
+  feed(90, 10);
+  plantNewer('gate.mjs', "process.stdout.write(JSON.stringify({ continue: false, stopReason: 'newer gate' }));\n");
+  const res = spawnSync(path.join(BIN, 'gate.sh'), [], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+    env,
+    encoding: 'utf8',
+  });
+  eq(JSON.parse(res.stdout).stopReason, 'newer gate', 'stopReason');
+  unplant();
+});
+
+check('the gate still says nothing when there is no breach to act on', () => {
+  feed(20, 10);
+  plantNewer('gate.mjs', "process.stdout.write(JSON.stringify({ continue: false, stopReason: 'newer gate' }));\n");
+  const res = spawnSync(path.join(BIN, 'gate.sh'), [], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+    env,
+    encoding: 'utf8',
+  });
+  eq(res.stdout, '', 'stdout');
+  unplant();
+});
+
 fs.rmSync(ROOT, { recursive: true, force: true });
 
 if (failures.length) {

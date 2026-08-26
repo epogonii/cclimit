@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- An update now takes effect in the session that is already running. Claude Code
+  resolves a plugin's directory once, at startup, and every version installs
+  into a directory of its own, so until now a fix to the part that decides
+  whether to stop you sat unused until the next restart. The command and the
+  gate both look for a newer installed copy and hand the work to it.
+- The handover only happens to a copy that looks whole: the module it imports
+  has to be next to it and the file has to parse. A half-written update is a
+  directory that exists and does not run, and this plugin is the wrong place to
+  turn a working version into no version at all.
+- The gate's hot path is untouched. The search happens after the breach check
+  and the `node` check, at a point where a process was starting anyway, so the
+  cost of the common case — nothing wrong, nothing to do — is the same two file
+  tests it always was.
+
 ## 0.2.0
 
 - Ceilings. `/cclimit ceiling 5h 99` sets a second, harder number: the line asks

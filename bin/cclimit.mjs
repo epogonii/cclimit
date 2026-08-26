@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import {
   CONFIG_FILE,
   SETTINGS_FILE,
@@ -34,10 +35,25 @@ import {
   pct,
   untilReset,
   localTime,
+  newerSelf,
 } from './lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SINK = path.join(HERE, 'sink.mjs');
+
+// A session pins the plugin directory it started with, so without this an
+// update only reaches the commands after a restart — and the command that was
+// just fixed keeps printing the bug.
+const newer = newerSelf(HERE, 'cclimit.mjs');
+if (newer) {
+  const relay = spawnSync(process.execPath, [newer, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: { ...process.env, CCLIMIT_NO_FORWARD: '1' },
+  });
+  // Anything that stopped the newer copy from running at all leaves this one to
+  // do the work rather than failing in front of the user.
+  if (!relay.error) process.exit(relay.status ?? 0);
+}
 const args = process.argv.slice(2).filter((a) => a !== '--json');
 const asJson = process.argv.includes('--json');
 const now = Math.floor(Date.now() / 1000);

@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 // CCLIMIT_CONFIG_DIR exists for the tests, which must never touch a real
 // ~/.claude. CLAUDE_CONFIG_DIR is Claude Code's own override and is honoured
@@ -192,6 +193,66 @@ export function minutesTo(used, target, perMinute) {
   const left = target - used;
   if (left <= 0) return 0;
   return Math.max(1, Math.round(left / perMinute));
+}
+
+// Claude Code resolves ${CLAUDE_PLUGIN_ROOT} once, when a session starts, so a
+// session that was running when the plugin was updated keeps executing the
+// version it started with until it is restarted. For a plugin whose whole job
+// is to be right about a number, that is the wrong default: an update should
+// take hold at once.
+//
+// So both entry points look for a newer copy of themselves and hand over to it.
+// Newest means most recently installed, matching the statusline wrapper, and
+// any doubt at all — no cache, unreadable directory, same copy, missing file —
+// means staying put and running as before.
+export function newerSelf(here, file) {
+  if (process.env.CCLIMIT_NO_FORWARD) return null;
+  const cache = path.join(CONFIG_DIR, 'plugins', 'cache');
+  let best = null;
+  try {
+    for (const market of fs.readdirSync(cache)) {
+      const versions = path.join(cache, market, 'cclimit');
+      let entries;
+      try {
+        entries = fs.readdirSync(versions);
+      } catch {
+        continue;
+      }
+      for (const version of entries) {
+        const candidate = path.join(versions, version, 'bin');
+        if (candidate === here) continue;
+        let stat;
+        try {
+          stat = fs.statSync(path.join(candidate, file));
+        } catch {
+          continue;
+        }
+        if (!best || stat.mtimeMs > best.mtimeMs) best = { dir: candidate, mtimeMs: stat.mtimeMs };
+      }
+    }
+  } catch {
+    return null;
+  }
+  if (!best) return null;
+  // Only hand over to something installed after this copy: a leftover older
+  // version must never win, and neither must a copy running outside the cache.
+  let own;
+  try {
+    own = fs.statSync(path.join(here, file)).mtimeMs;
+  } catch {
+    return null;
+  }
+  if (best.mtimeMs <= own) return null;
+
+  // An update caught halfway leaves a directory that exists and does not run.
+  // Handing the user's escape hatch to it would turn a stale version — which
+  // works — into no version at all, so it has to be whole before it is trusted.
+  if (!fs.existsSync(path.join(best.dir, 'lib.mjs'))) return null;
+  const target = path.join(best.dir, file);
+  const parses = spawnSync(process.execPath, ['--check', target], { stdio: 'ignore' });
+  if (parses.error || parses.status !== 0) return null;
+
+  return target;
 }
 
 export function pct(value) {
