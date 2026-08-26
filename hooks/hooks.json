@@ -1,11 +1,13 @@
 {
+  "description": "Halts the turn when plan usage crosses the limit set by /cclimit.",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh",
+            "timeout": 10
           }
         ]
       }
@@ -16,7 +18,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh",
+            "timeout": 10
           }
         ]
       }
