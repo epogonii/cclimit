@@ -89,6 +89,21 @@ jobs:
               if (!target) throw new Error(`not rooted in the plugin: ${run}`);
               if (!fs.existsSync(target[1])) throw new Error(`${target[1]} is referenced but does not ship`);
             }
+            // A case is a prompt and the graders that score it. Half of one
+            // is a case that runs and proves nothing, or one that scores
+            // nothing at all, and `claude plugin eval` is early access, so CI
+            // cannot find that out by running the suite.
+            if (fs.existsSync("evals")) {
+              for (const entry of fs.readdirSync("evals", { withFileTypes: true })) {
+                if (!entry.isDirectory() || entry.name === "results") continue;
+                const dir = `evals/${entry.name}`;
+                if (!fs.existsSync(`${dir}/prompt.md`)) throw new Error(`${dir} has no prompt.md`);
+                const graders = fs.existsSync(`${dir}/graders`)
+                  ? fs.readdirSync(`${dir}/graders`).filter((f) => f.endsWith(".md"))
+                  : [];
+                if (!graders.length) throw new Error(`${dir} has no graders/*.md`);
+              }
+            }
             const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
             if (!changelog.includes(`## ${plugin.version}`)) {
               throw new Error(`CHANGELOG.md has no section for ${plugin.version}`);

@@ -8,3 +8,6 @@ npm-debug.log*
 # local scratch
 *.local
 *.log
+
+# eval runs (they carry the usage numbers of whoever ran them)
+evals/results/
