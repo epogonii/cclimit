@@ -1025,12 +1025,17 @@ check('status draws the last stretch of burn as a sparkline', () => {
   if (!line) throw new Error(`no span label on the sparkline: ${text}`);
   const spark = line.match(/[\u2581-\u2588]{30}/);
   if (!spark) throw new Error(`no sparkline in status: ${text}`);
-  // The busy middle has to stand above the quiet start, or the chart is drawn
-  // from levels rather than from what each stretch cost.
+  // The busy middle has to stand above the quiet ends, or the chart is drawn
+  // from levels rather than from what each stretch cost. Which cell the peak
+  // lands in shifts with however long the run took to get here, so this asks
+  // only that it is somewhere in the middle and that both ends are below it.
   const cells = [...spark[0]].map((c) => c.codePointAt(0) - 0x2580);
-  const early = Math.max(...cells.slice(0, 8));
-  const middle = Math.max(...cells.slice(10, 20));
-  if (middle <= early) throw new Error(`the busy stretch is not the tall one: ${spark[0]}`);
+  const top = Math.max(...cells);
+  const at = cells.indexOf(top);
+  if (at < 3 || at > 26) throw new Error(`the peak is at the edge: ${spark[0]}`);
+  if (cells[0] >= top || cells[cells.length - 1] >= top) {
+    throw new Error(`the quiet stretches are not the low ones: ${spark[0]}`);
+  }
   fs.rmSync(path.join(STATE, 'history.json'), { force: true });
 });
 
