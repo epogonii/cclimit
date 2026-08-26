@@ -40,8 +40,8 @@
 
 Your plan has two usage windows: a 5-hour one and a 7-day one. Claude Code shows
 the percentages, and then does nothing with them. When you run out, one of two
-things happens — the session stops and waits for the reset, or, if extra usage is
-enabled on the account, it keeps going and starts billing.
+things happens: the session stops and waits for the reset, or, if extra usage
+is enabled on the account, it keeps going and starts billing.
 
 Neither one asks you first. The built-in machinery is all reactive: a
 `StopFailure` handler that resumes after a rate limit is hit, a one-time consent
@@ -68,8 +68,8 @@ The reset time is printed in your own locale, on a 24-hour clock.
 Nothing runs until you answer. `/cclimit go` stands down until the window resets,
 so you are asked once per crossing, not once per tool call.
 
-Subagent launches say so explicitly, because a `Task` call is not one tool call —
-it is a whole session's worth of them starting at once.
+Subagent launches say so explicitly, because a `Task` call is not one tool
+call; it is a whole session's worth of them starting at once.
 
 ## Install
 
@@ -90,10 +90,11 @@ already have:
 node <plugin>/scripts/sink.mjs | your-existing-statusline-command
 ```
 
-The collector copies stdin through untouched — your statusline looks exactly as it
-did — and writes the two percentages to `~/.claude/cclimit/`. `settings.json` is
-backed up to `settings.json.cclimit-backup` first, your `padding` is preserved,
-and `refreshInterval` is set to 10s if it was missing or slower than 30s,
+The collector copies stdin through untouched, so your statusline looks exactly
+as it did, and writes the two percentages to `~/.claude/cclimit/`.
+`settings.json` is backed up to `settings.json.cclimit-backup` first, your
+`padding` is preserved, and `refreshInterval` is set to 10s if it was missing
+or slower than 30s,
 because a reading nobody refreshes goes stale and cclimit ignores stale
 readings.
 
@@ -108,12 +109,12 @@ If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11
 | `/cclimit status` | where usage stands, what the lines are, whether anything is being held |
 | `/cclimit 5h 85` | stop at 85% of the 5-hour window |
 | `/cclimit 7d 90` | stop at 90% of the 7-day window |
-| `/cclimit ceiling 5h 99` | the number `/cclimit go` cannot lift — `off` removes it |
-| `/cclimit notice 5h 75` | say something at 75% without blocking anything — `off` removes it |
+| `/cclimit ceiling 5h 99` | the number `/cclimit go` cannot lift; `off` removes it |
+| `/cclimit notice 5h 75` | say something at 75% without blocking anything; `off` removes it |
 | `/cclimit go` | continue until the current window resets |
-| `/cclimit action stop\|ask\|warn` | what a crossing does — see below |
-| `/cclimit downgrade sonnet` | past the line, run subagents cheaper instead of stopping — `off` removes it |
-| `/cclimit alert bell\|notify\|off` | how loud an interruption is — `bell` by default |
+| `/cclimit action stop\|ask\|warn` | what a crossing does; see below |
+| `/cclimit downgrade sonnet` | past the line, run subagents cheaper instead of stopping; `off` removes it |
+| `/cclimit alert bell\|notify\|off` | how loud an interruption is; `bell` by default |
 | `/cclimit config` | every setting and the command that changes it |
 | `/cclimit on` / `/cclimit off` | reinstate / disable, without uninstalling anything |
 | `/cclimit install` / `/cclimit uninstall` | wire the collector into the statusline, or remove it |
@@ -134,30 +135,30 @@ cclimit is on · action: stop
       resets Aug 30, 22:00 (in 105h 1m)
 ```
 
-The tick in the bar is where the work stops — the ceiling if you have one, the
+The tick in the bar is where the work stops: the ceiling if you have one, the
 line otherwise. The climb rate only appears once there are enough readings
 behind it to mean something, and the projection under it only while the reset
-is close enough for the current pace to say anything about it — which is why
+is close enough for the current pace to say anything about it, which is why
 the 7-day window rarely gets one. The sparkline is the last hour of spending,
 one cell per two minutes, drawn from what was spent inside each cell rather
 than the total it stood at.
 
 Claude Code namespaces plugin commands, so each of these is really
-`/cclimit:status`, `/cclimit:go` and so on — which is what the `/` menu shows
+`/cclimit:status`, `/cclimit:go` and so on, which is what the `/` menu shows
 and completes. The two-word form above works because Claude Code reads the
 first word after the plugin name as the command. `/cclimit` on its own does
 not resolve to anything; use `/cclimit status`.
 
 All of them are yours to type and Claude's to leave alone. The command files are
 marked as not model-invocable, and the gate exempts only a prompt that starts
-with `/cclimit` — never a tool call — so the model can neither call the commands
+with `/cclimit`, never a tool call, so the model can neither call the commands
 nor reach the binary behind them. It cannot raise the line, snooze, or switch
 the plugin off. Deciding to spend past the line is the one thing this plugin
 exists to keep in your hands.
 
 ## The ceiling
 
-One line gives you two answers and no third: stop, or `/cclimit go` — which
+One line gives you two answers and no third: stop, or `/cclimit go`, which
 lifts the line for the rest of the window. Answering "let me finish this" costs
 you every percent between here and 100.
 
@@ -194,7 +195,7 @@ Your ceiling is 99%, about 14m away at the current rate.
 ```
 
 That estimate is measured, not guessed: cclimit keeps the last few dozen
-readings and divides. No trail, a flat one, or a window that has just reset —
+readings and divides. No trail, a flat one, or a window that has just reset:
 the sentence simply ends after the ceiling. The model is never asked to predict
 anything, and could not act on it if it were.
 
@@ -217,11 +218,11 @@ Nothing is blocked — this is the heads-up, said once per window.
 
 Once per window is the whole design. It is recorded against the window's reset
 time, so the next window says it again and the current one does not say it
-twice — a warning repeated at every tool call is a warning nobody reads. Under
+twice; a warning repeated at every tool call is a warning nobody reads. Under
 `/cclimit go` it stays quiet: you have already said you know.
 
 There is none until you set one, it has to sit below the line, and it decides
-nothing — it is the only number here that exists purely to be read.
+nothing; it is the only number here that exists purely to be read.
 
 ## When the window resets
 
@@ -234,11 +235,11 @@ Nothing is being held. Work stops again at 85%. The new window resets Aug 26, 18
 ```
 
 Said once, on the first prompt after the reset, however many hours later that
-is. A window nobody was waiting on — one that never reached its notice or its
-line — resets in silence.
+is. A window nobody was waiting on, one that never reached its notice or its
+line, resets in silence.
 
 Every open session renders its own statusline, so they all write to the same
-trail — and a session sitting idle keeps rendering the usage it last saw, which
+trail, and a session sitting idle keeps rendering the usage it last saw, which
 can be hours old. Usage inside a window only ever climbs, and only a real reset
 moves the reset time, so a reading that comes back lower in the same window, or
 that belongs to a window which has already turned over, is dropped rather than
@@ -252,19 +253,19 @@ allowed to stand in for the live one.
 | `ask` | routes the tool call to the permission prompt | yes, one call at a time |
 | `warn` | prints a line, blocks nothing | yes |
 
-**`stop`** (default) — the turn halts outright and the reason is shown. One
+**`stop`** (default): the turn halts outright and the reason is shown. One
 interruption per crossing, and nothing runs after it until you say so. The turn
 is gone, not paused: `/cclimit go` lifts the line for what comes next, it does
 not resume what was interrupted, so ask for the work again afterwards. If
 losing the turn is the part you mind, `ask` is the action that keeps it.
 
-**`ask`** — the tool call is routed to the normal permission prompt: the box at
+**`ask`**: the tool call is routed to the normal permission prompt: the box at
 the bottom of the terminal, answered with the arrow keys, with the reason for
 the stop printed inside it. You get allow/deny in the moment. Be aware of what this costs: a permission answer
 applies to that one call. The next tool call asks again. That is a property of
-the permission system, not a bug here — it is why `stop` is the default.
+the permission system, not a bug here; it is why `stop` is the default.
 
-**`warn`** — nothing is blocked. A line appears above the answer saying where
+**`warn`**: nothing is blocked. A line appears above the answer saying where
 usage stands. For people who want the heads-up and not the brakes.
 
 All three describe what happens at the *line*. A ceiling always stops.
@@ -278,7 +279,7 @@ All three describe what happens at the *line*. A ceiling always stops.
 ```
 
 An interruption arrives in the middle of a turn, which is exactly when you have
-gone to do something else — that is the situation the plugin is for, and a
+gone to do something else. That is the situation the plugin is for, and a
 message nobody is looking at is not much better than no message. So a stop, an
 `ask` and a `warn` all ring the bell on their way out. A blocked *prompt*
 doesn't: you pressed enter a second ago and are still watching the screen.
@@ -302,7 +303,7 @@ that have one:
 Anything else gets the bell alone, because a terminal sent a sequence it does
 not recognise can print the payload as text instead of swallowing it. That
 includes macOS Terminal.app, Alacritty, xterm, Konsole, and GNOME Terminal and
-the rest of the VTE family — OSC 777 reached VTE as a distribution patch rather
+the rest of the VTE family. OSC 777 reached VTE as a distribution patch rather
 than upstream, so the same terminal answers it on one machine and ignores it on
 the next, and a hook has no way to tell which. Inside tmux or screen it is the
 bell as well: passing an OSC through to the outer terminal needs a wrapper that
@@ -322,10 +323,10 @@ this in an interactive session, so nothing rings under `claude -p`.
 Off unless you ask for it. With it on, crossing the line stops nothing: every
 subagent started from there on has its model rewritten to the cheaper one, and
 the prompt is told once that this is happening. A ceiling still stops
-everything — that is what a ceiling is for.
+everything; that is what a ceiling is for.
 
 It needs a Claude Code new enough to take a `model` on a subagent launch, since
-that is the field being rewritten — if launches start erroring once it is on,
+that is the field being rewritten. If launches start erroring once it is on,
 `/cclimit downgrade off` puts them back.
 
 What it cannot do is move *your* session onto the cheaper model. A hook can
