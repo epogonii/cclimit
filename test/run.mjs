@@ -301,10 +301,32 @@ check('a blocked prompt does not ring', () => {
 
 check('ask and warn ring on a tool call too', () => {
   for (const action of ['ask', 'warn']) {
+    // A warn spends its bell once a window, so start each one unspent.
+    fs.rmSync(path.join(STATE, 'notice.json'), { force: true });
     feed(90, 10);
     cli('action', action);
     eq(gate('PreToolUse', tool, NO_TERMINAL).terminalSequence, BELL, `terminalSequence under ${action}`);
   }
+  cli('action', 'stop');
+});
+
+// A warn does not block, so the same breach comes back on the very next tool
+// call. Repeating the line is the whole action; repeating the bell would be the
+// interruption a warn is chosen to avoid.
+check('a warn rings once a window, not once a tool call', () => {
+  fs.rmSync(path.join(STATE, 'notice.json'), { force: true });
+  feed(90, 10);
+  cli('action', 'warn');
+  const first = gate('PreToolUse', tool, NO_TERMINAL);
+  const second = gate('PreToolUse', tool, NO_TERMINAL);
+  eq(first.terminalSequence, BELL, 'the first tool call rings');
+  eq(second.terminalSequence, undefined, 'the second tool call does not');
+  eq(second.systemMessage, first.systemMessage, 'the warning itself carries on');
+
+  // A bell spent in the window before this one is not this window's bell.
+  fs.writeFileSync(path.join(STATE, 'notice.json'), JSON.stringify({ 'alert:five_hour': NOW - 99999 }));
+  eq(gate('PreToolUse', tool, NO_TERMINAL).terminalSequence, BELL, 'a new window rings again');
+  fs.rmSync(path.join(STATE, 'notice.json'), { force: true });
   cli('action', 'stop');
 });
 

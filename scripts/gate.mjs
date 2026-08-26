@@ -43,6 +43,19 @@ function emit(response) {
 //
 // Nothing is added to the prompt paths on purpose: a blocked prompt lands a
 // second after the user pressed enter, and they are still watching the screen.
+// A warn blocks nothing, so the same line fires again on the next tool call and
+// the one after that. Saying it every time is the point of the action; ringing
+// every time would be the interruption the action exists to avoid, so the bell
+// is spent once per window and the message carries on alone.
+//
+// A stop ends the turn and an ask waits for an answer, so neither can repeat
+// faster than the user can act on it. Only warn needs the damper.
+function firstThisWindow(key) {
+  if (loadNotices()[key] === (breach.resets_at ?? 0)) return false;
+  markNoticed(key, breach.resets_at);
+  return true;
+}
+
 function alerted(response, what) {
   const seq = alertSequence(config, `${breach.label} usage ${pct(breach.used_percentage)} \u2014 ${what}`);
   return seq ? { ...response, terminalSequence: seq } : response;
@@ -197,7 +210,7 @@ if (isFanOut) {
 switch (kind === 'ceiling' ? 'stop' : config.action) {
   case 'warn':
     emit(
-      event === 'PreToolUse'
+      event === 'PreToolUse' && firstThisWindow(`alert:${breach.window}`)
         ? alerted({ systemMessage: message }, 'past your line.')
         : { systemMessage: message }
     );

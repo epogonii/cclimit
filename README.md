@@ -284,6 +284,12 @@ message nobody is looking at is not much better than no message. So a stop, an
 doesn't: you pressed enter a second ago and are still watching the screen.
 Neither does a heads-up, which is not an interruption.
 
+A `warn` rings once a window rather than once a tool call. It blocks nothing, so
+the same warning comes back on the next call and the one after that; saying it
+every time is the point of the action, but ringing every time would be the
+interruption you chose `warn` to avoid. A stop ends the turn and an `ask` waits
+for an answer, so neither can repeat faster than you can act on it.
+
 The bell works everywhere. `notify` adds a desktop notification on the terminals
 that have one:
 
