@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.5
+
+- The notification finds the terminals that ship on Linux. Almost nothing
+  outside macOS sets `TERM_PROGRAM`, so `TERM` alone now answers for Ghostty,
+  kitty, urxvt, foot and WezTerm. GNOME Terminal and the rest of the VTE family
+  stay on the bell on purpose: OSC 777 reached VTE as a distribution patch
+  rather than upstream, so the same terminal answers it on one machine and
+  ignores it on the next.
+
 ## 0.5.4
 
 - An interruption is audible. A stop, an `ask` and a `warn` on a tool call now
