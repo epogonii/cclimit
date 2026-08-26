@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.2
+
+- The executables moved out of `bin/` into `scripts/`. A plugin with a
+  top-level `bin/` directory cannot be handed out through organization settings
+  on claude.ai, which turns it away with
+  `marketplace_sync_bin_directory_not_allowed`, and no part of the layout was
+  worth that. Hooks and commands point at the new path. Both entry points still
+  look for a newer copy of themselves in the plugin cache and hand over to it,
+  and they now recognise either shape, so a session that started on an older
+  version and a session that started on this one still find each other.
+- A statusline wrapper written by an earlier version is repaired the next time
+  any `/cclimit` command runs. The wrapper is a file rather than code, so it did
+  not change when the plugin did: it went on looking for the collector under
+  `bin/`, found the copy an earlier install had left in the cache, and would
+  have kept running that older collector for good. Only the two lines that find
+  the collector are rewritten, so whatever statusline command was wrapped
+  around it is left exactly as it was.
+- The test that draws a sparkline no longer insists the busiest stretch lands
+  on a particular cell. It was asserting where the peak sat rather than that the
+  busy stretch was the tall one, which made it fail on a run that happened to
+  bucket the same curve one cell over.
+- The README opens with a demo of what the plugin does.
+
 ## 0.5.1
 
 - A reading from a session that has been sitting idle no longer overwrites the
