@@ -359,6 +359,46 @@ export function recordHistory(rateLimits, now = Math.floor(Date.now() / 1000)) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(history) + '\n');
 }
 
+// Every session renders its own statusline, and the payload it renders carries
+// that session's last known usage — which in a session sitting idle can be
+// hours old. So the collector is written to by every open window at once, and
+// a stale one would otherwise overwrite the live reading with a number from
+// before the work happened, taking the gates down with it.
+//
+// Usage inside a window only ever climbs, and a reading from a window that has
+// already reset carries the old reset time. Both are enough to tell a stale
+// reading from a new one without asking which session it came from.
+export function mergeLimits(previous, incoming) {
+  if (!incoming || typeof incoming !== 'object') return incoming ?? null;
+  if (!previous || typeof previous !== 'object') return incoming;
+
+  const merged = {};
+  for (const [key, win] of Object.entries(incoming)) {
+    const before = previous[key];
+    const stale = before?.resets_at;
+    const fresh = win?.resets_at;
+    if (
+      typeof stale === 'number' &&
+      typeof fresh === 'number' &&
+      typeof before?.used_percentage === 'number' &&
+      typeof win?.used_percentage === 'number'
+    ) {
+      // A reading from a window that has already turned over says nothing about
+      // the one running now.
+      if (fresh < stale) {
+        merged[key] = before;
+        continue;
+      }
+      if (fresh === stale && win.used_percentage < before.used_percentage) {
+        merged[key] = { ...win, used_percentage: before.used_percentage };
+        continue;
+      }
+    }
+    merged[key] = win;
+  }
+  return merged;
+}
+
 // Percentage points per minute, or null when the trail cannot support a number:
 // too few readings, too short a span, usage flat or falling. A window that has
 // reset counts as falling, which is the honest answer — the rate before a reset
@@ -411,20 +451,40 @@ export function sparkline(history, key, now = Math.floor(Date.now() / 1000), cel
     .sort((a, b) => a.ts - b.ts);
   if (points.length < 2) return null;
 
-  const start = points[0].ts;
   const end = Math.max(now, points[points.length - 1].ts);
+
+  // The percentages arrive as whole numbers, so an hour of steady work is not a
+  // curve but a staircase: nothing, nothing, a step, nothing. Drawn as it
+  // arrives that is a comb of spikes with gaps between them, which says the
+  // work happened in bursts it did not happen in. The spending that produced a
+  // step happened over the stretch leading up to it, so the curve is rebuilt
+  // from the moments the number moved and read as a straight line between them.
+  const changes = [{ ts: points[0].ts, used: points[0][key] }];
+  for (const point of points) {
+    if (point[key] !== changes[changes.length - 1].used) changes.push({ ts: point.ts, used: point[key] });
+  }
+  // One step is a fact, not a shape. Two are the least that can differ.
+  if (changes.length < 3) return null;
+
+  // The chart starts at the first step rather than the first reading: whatever
+  // earned that step was partly spent before the trail began, so the stretch in
+  // front of it is a rate that looks higher than the work that produced it.
+  const start = changes[1].ts;
   const span = end - start;
   if (span < 120) return null;
 
-  // Readings are irregular and a session that was closed leaves gaps, so each
-  // bucket edge takes the last reading at or before it rather than assuming one.
   const valueAt = (t) => {
-    let value = points[0][key];
-    for (const point of points) {
-      if (point.ts > t) break;
-      value = point[key];
+    if (t <= changes[0].ts) return changes[0].used;
+    for (let i = 1; i < changes.length; i += 1) {
+      if (t > changes[i].ts) continue;
+      const from = changes[i - 1];
+      const to = changes[i];
+      const gap = to.ts - from.ts;
+      // A fall is a window reset, not a slope to draw down.
+      if (gap <= 0 || to.used < from.used) return to.used;
+      return from.used + (to.used - from.used) * ((t - from.ts) / gap);
     }
-    return value;
+    return changes[changes.length - 1].used;
   };
 
   const step = span / cells;
@@ -438,8 +498,16 @@ export function sparkline(history, key, now = Math.floor(Date.now() / 1000), cel
   const peak = Math.max(...deltas);
   if (peak <= 0) return null;
 
+  // Height is relative to the busiest bucket, so a steady hour would otherwise
+  // scale up into a solid black wall that reads as trouble. An even burn is
+  // drawn as the level line it is. Measured against the middle bucket rather
+  // than the quietest, so that the one bucket the last step has not landed in
+  // yet does not turn a flat hour into a cliff.
+  const sorted = [...deltas].sort((a, b) => a - b);
+  const even = peak - sorted[Math.floor(cells / 2)] <= peak * 0.2;
+
   return {
-    text: deltas.map((d) => SPARK_CHARS[Math.min(7, Math.round((d / peak) * 7))]).join(''),
+    text: deltas.map((d) => (even ? SPARK_CHARS[3] : SPARK_CHARS[Math.min(7, Math.round((d / peak) * 7))])).join(''),
     minutes: Math.max(1, Math.round(span / 60)),
     peak,
   };

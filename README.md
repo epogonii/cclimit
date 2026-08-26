@@ -227,6 +227,13 @@ Said once, on the first prompt after the reset, however many hours later that
 is. A window nobody was waiting on — one that never reached its notice or its
 line — resets in silence.
 
+Every open session renders its own statusline, so they all write to the same
+trail — and a session sitting idle keeps rendering the usage it last saw, which
+can be hours old. Usage inside a window only ever climbs, and only a real reset
+moves the reset time, so a reading that comes back lower in the same window, or
+that belongs to a window which has already turned over, is dropped rather than
+allowed to stand in for the live one.
+
 ## The three actions
 
 | | what a crossing does | you keep the turn |

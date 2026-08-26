@@ -18,6 +18,7 @@ import {
   LIMITS_FILE,
   loadConfig,
   loadLimits,
+  mergeLimits,
   evaluate,
   pendingNotice,
   armResume,
@@ -63,14 +64,18 @@ try {
 if (!render) process.stdout.write(raw);
 
 try {
-  const rateLimits = payload?.rate_limits ?? null;
+  const incoming = payload?.rate_limits ?? null;
   const config = loadConfig();
-  const breach = evaluate(rateLimits, config);
 
   // Read before the write below replaces it: a window rolling over is only
   // visible as the difference between two readings, and there is no second
   // chance to see it.
-  const previous = rateLimits ? loadLimits()?.rate_limits ?? null : null;
+  const previous = incoming ? loadLimits()?.rate_limits ?? null : null;
+
+  // What every other line here works from: the incoming reading with anything
+  // an idle session brought back from the past dropped out of it.
+  const rateLimits = incoming ? mergeLimits(previous, incoming) : null;
+  const breach = evaluate(rateLimits, config);
 
   if (rateLimits) {
     fs.mkdirSync(STATE_DIR, { recursive: true });

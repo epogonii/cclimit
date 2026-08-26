@@ -70,8 +70,18 @@ function statusline(fiveHour, sevenDay, extra = {}) {
   });
 }
 
+// Most checks set an absolute state and read what came of it, so each one is
+// the collector's first sight of the numbers it is given. Without this, a
+// reading lower than the one a previous check left behind would be discarded
+// as stale — which is the point of the rule, and is exercised on its own with
+// `feedAgain` below rather than in every check that lowers a number.
 function feed(fiveHour, sevenDay) {
-  const payload = statusline(fiveHour, sevenDay);
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  return feedAgain(fiveHour, sevenDay);
+}
+
+function feedAgain(fiveHour, sevenDay, extra = {}) {
+  const payload = statusline(fiveHour, sevenDay, extra);
   const res = run('sink.mjs', [], payload);
   return { res, payload };
 }
@@ -101,6 +111,55 @@ check('sink records the usage it saw', () => {
   feed(20, 10);
   const stored = JSON.parse(fs.readFileSync(path.join(STATE, 'limits.json'), 'utf8'));
   eq(stored.rate_limits.five_hour.used_percentage, 20, 'five_hour');
+});
+
+// --- a reading from a session that has been sitting idle --------------------
+
+function storedLimits() {
+  return JSON.parse(fs.readFileSync(path.join(STATE, 'limits.json'), 'utf8')).rate_limits;
+}
+
+check('a reading lower than the last one in the same window is not believed', () => {
+  feed(90, 10);
+  feedAgain(30, 10);
+  eq(storedLimits().five_hour.used_percentage, 90, 'five_hour');
+  eq(breachFile()?.used_percentage, 90, 'breach percentage');
+});
+
+check('the trail records the number the gates act on', () => {
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+  feed(90, 10);
+  feedAgain(30, 10);
+  const history = JSON.parse(fs.readFileSync(path.join(STATE, 'history.json'), 'utf8'));
+  eq(history[history.length - 1].five_hour, 90, 'last reading');
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
+check('a reading from a window that has already reset is ignored', () => {
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  feedWindows(60, NOW + 3600, 10, NOW + 86400);
+  feedWindows(88, NOW + 600, 10, NOW + 86400);
+  eq(storedLimits().five_hour.used_percentage, 60, 'five_hour');
+});
+
+check('a window that really has reset is taken at its word', () => {
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  feedWindows(90, NOW + 600, 10, NOW + 86400);
+  feedWindows(4, NOW + 3600, 10, NOW + 86400);
+  eq(storedLimits().five_hour.used_percentage, 4, 'five_hour');
+  // That last pair is a rollover, which arms the announcement for it.
+  fs.rmSync(path.join(STATE, 'resume.json'), { force: true });
+  fs.rmSync(path.join(STATE, 'breach.json'), { force: true });
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+});
+
+check('one window going stale does not hold the other back', () => {
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  feedWindows(60, NOW + 3600, 40, NOW + 86400);
+  feedWindows(20, NOW + 3600, 41, NOW + 86400);
+  eq(storedLimits().five_hour.used_percentage, 60, 'five_hour');
+  eq(storedLimits().seven_day.used_percentage, 41, 'seven_day');
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
 });
 
 check('usage below the line leaves no breach', () => {
@@ -146,6 +205,7 @@ check('sink survives input that is not JSON at all', () => {
 });
 
 check('--render prints a usage line instead of the payload', () => {
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
   const res = run('sink.mjs', ['--render'], statusline(42, 11));
   if (!/5h 42%/.test(res.stdout)) throw new Error(`no usage in: ${res.stdout}`);
   if (!/7d 11%/.test(res.stdout)) throw new Error(`no 7d usage in: ${res.stdout}`);
@@ -950,18 +1010,63 @@ check('the 7-day window gets no projection, because the rate cannot support one'
 
 check('status draws the last stretch of burn as a sparkline', () => {
   ceilingOff();
-  // Half an hour of readings with the spending bunched in the middle.
+  // Half an hour of readings with the spending bunched in the middle. Whole
+  // percentages, because that is what Claude Code publishes.
   writeHistory(
     Array.from({ length: 31 }, (_, i) => ({
       ts: NOW - (30 - i) * 60,
-      five_hour: 40 + (i < 10 ? i * 0.1 : i < 20 ? 1 + (i - 10) * 0.5 : 6 + (i - 20) * 0.1),
+      five_hour: 40 + (i < 10 ? Math.round(i * 0.1) : i < 20 ? Math.round(1 + (i - 10) * 0.5) : Math.round(6 + (i - 20) * 0.1)),
       seven_day: 10,
     }))
   );
   feed(47, 10);
   const text = cli('status');
-  if (!/last 30m/.test(text)) throw new Error(`no span label on the sparkline: ${text}`);
-  if (!/[▁-█]{30}/.test(text)) throw new Error(`no sparkline in status: ${text}`);
+  const line = text.split('\n').find((l) => /last \d+m/.test(l));
+  if (!line) throw new Error(`no span label on the sparkline: ${text}`);
+  const spark = line.match(/[\u2581-\u2588]{30}/);
+  if (!spark) throw new Error(`no sparkline in status: ${text}`);
+  // The busy middle has to stand above the quiet start, or the chart is drawn
+  // from levels rather than from what each stretch cost.
+  const cells = [...spark[0]].map((c) => c.codePointAt(0) - 0x2580);
+  const early = Math.max(...cells.slice(0, 8));
+  const middle = Math.max(...cells.slice(10, 20));
+  if (middle <= early) throw new Error(`the busy stretch is not the tall one: ${spark[0]}`);
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
+check('a staircase of whole percentages is not drawn as a comb', () => {
+  ceilingOff();
+  // Steady work at about a third of a point a minute: the number moves once
+  // every three minutes and sits still in between.
+  writeHistory(
+    Array.from({ length: 91 }, (_, i) => ({
+      ts: NOW - (90 - i) * 20,
+      five_hour: 40 + Math.floor(i / 9),
+      seven_day: 10,
+    }))
+  );
+  feed(50, 10);
+  const text = cli('status');
+  const spark = text.match(/[\u2581-\u2588]{30}/);
+  if (!spark) throw new Error(`no sparkline in status: ${text}`);
+  const cells = [...spark[0]].map((c) => c.codePointAt(0) - 0x2580);
+  const gaps = cells.filter((c) => c === 1).length;
+  if (gaps > 2) throw new Error(`steady work drawn as ${gaps} empty cells: ${spark[0]}`);
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
+check('one step in the whole trail is a fact, not a shape', () => {
+  ceilingOff();
+  writeHistory(
+    Array.from({ length: 60 }, (_, i) => ({
+      ts: NOW - (60 - i) * 20,
+      five_hour: i < 30 ? 3 : 4,
+      seven_day: 10,
+    }))
+  );
+  feed(4, 10);
+  const text = cli('status');
+  if (/last \d+m/.test(text)) throw new Error(`a single step was charted: ${text}`);
   fs.rmSync(path.join(STATE, 'history.json'), { force: true });
 });
 
@@ -985,6 +1090,10 @@ function feedWindows(five, fiveReset, seven, sevenReset) {
 function resetResume() {
   fs.rmSync(path.join(STATE, 'resume.json'), { force: true });
   fs.rmSync(path.join(STATE, 'breach.json'), { force: true });
+  // These scenarios move the reset time forward on purpose, and a reading that
+  // arrives with an earlier one is now treated as stale. Start each of them
+  // without a stored reading rather than against the last one left behind.
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
   resetNotices();
 }
 
@@ -1068,6 +1177,7 @@ check('a resume file that cannot be parsed is rewritten rather than kept', () =>
 function downgradeOff() {
   cli('downgrade', 'off');
   ceilingOff();
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
   resetNotices();
 }
 
