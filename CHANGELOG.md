@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.6
+
+- A `warn` rings once a window instead of once a tool call. It blocks nothing,
+  so the same breach comes back on the very next call; repeating the line is the
+  action, but repeating the bell was the interruption `warn` is chosen to avoid.
+  A stop ends the turn and an `ask` waits for an answer, so neither could repeat
+  faster than the user could act on it and neither is damped.
+
 ## 0.5.5
 
 - The notification finds the terminals that ship on Linux. Almost nothing
