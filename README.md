@@ -19,6 +19,10 @@
 </p>
 
 <p align="center">
+  <img width="760" alt="Pixel-art loop of the same hour twice. Without cclimit, you leave the desk and come back to 100% and $10.80 of extra usage. With a line set, the run stops at 85% and waits for you." src="docs/demo.gif">
+</p>
+
+<p align="center">
   <a href="#what-it-does">What it does</a> ·
   <a href="#install">Install</a> ·
   <a href="#commands">Commands</a> ·
@@ -28,10 +32,6 @@
   <a href="#the-three-actions">The three actions</a> ·
   <a href="#running-cheaper-instead-of-stopping">Running cheaper</a> ·
   <a href="#config">Config</a>
-</p>
-
-<p align="center">
-  <img width="760" alt="Pixel-art loop of the same hour twice. Without cclimit, you leave the desk and come back to 100% and $10.80 of extra usage. With a line set, the run stops at 85% and waits for you." src="docs/demo.gif">
 </p>
 
 ---
