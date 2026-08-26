@@ -523,6 +523,10 @@ export function sparkline(history, key, now = Math.floor(Date.now() / 1000), cel
 // Newest means most recently installed, matching the statusline wrapper, and
 // any doubt at all — no cache, unreadable directory, same copy, missing file —
 // means staying put and running as before.
+// bin/ was the layout up to 0.5.1. A copy installed then is still a real
+// copy, so both names are looked at and neither is assumed.
+const LAYOUTS = ['scripts', 'bin'];
+
 export function newerSelf(here, file) {
   if (process.env.CCLIMIT_NO_FORWARD) return null;
   const cache = path.join(CONFIG_DIR, 'plugins', 'cache');
@@ -537,15 +541,17 @@ export function newerSelf(here, file) {
         continue;
       }
       for (const version of entries) {
-        const candidate = path.join(versions, version, 'bin');
-        if (candidate === here) continue;
-        let stat;
-        try {
-          stat = fs.statSync(path.join(candidate, file));
-        } catch {
-          continue;
+        for (const layout of LAYOUTS) {
+          const candidate = path.join(versions, version, layout);
+          if (candidate === here) continue;
+          let stat;
+          try {
+            stat = fs.statSync(path.join(candidate, file));
+          } catch {
+            continue;
+          }
+          if (!best || stat.mtimeMs > best.mtimeMs) best = { dir: candidate, mtimeMs: stat.mtimeMs };
         }
-        if (!best || stat.mtimeMs > best.mtimeMs) best = { dir: candidate, mtimeMs: stat.mtimeMs };
       }
     }
   } catch {

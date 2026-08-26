@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The slow path, reached only when bin/gate.sh found a recent breach file.
+// The slow path, reached only when scripts/gate.sh found a recent breach file.
 // Decides what to do about it and prints the hook response.
 //
 // Every failure here is silent and permissive: no payload, no config, stale

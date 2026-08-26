@@ -4,7 +4,7 @@ allowed-tools: Bash(node:*)
 disable-model-invocation: true
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/bin/cclimit.mjs" install $ARGUMENTS`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/cclimit.mjs" install $ARGUMENTS`
 
 The command above already did the work and its output is the answer. Reply
 with that text exactly as printed — same words, same line breaks, no code

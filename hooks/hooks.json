@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/gate.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/gate.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh"
           }
         ]
       }

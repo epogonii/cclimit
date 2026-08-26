@@ -5,8 +5,8 @@
 // statusline pipe: it copies stdin to stdout untouched, then records what it
 // saw for the gates to read.
 //
-//   node bin/sink.mjs | <the statusline command you already had>
-//   node bin/sink.mjs --render        # no downstream command: print a line of our own
+//   node scripts/sink.mjs | <the statusline command you already had>
+//   node scripts/sink.mjs --render        # no downstream command: print a line of our own
 //
 // stdout is written before anything else happens, so a broken config or an
 // unwritable state directory can never delay or corrupt the user's statusline.

@@ -83,7 +83,7 @@ not carry them. So `install` puts a collector in front of whatever statusline yo
 already have:
 
 ```sh
-node <plugin>/bin/sink.mjs | your-existing-statusline-command
+node <plugin>/scripts/sink.mjs | your-existing-statusline-command
 ```
 
 The collector copies stdin through untouched — your statusline looks exactly as it

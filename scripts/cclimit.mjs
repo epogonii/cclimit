@@ -446,7 +446,8 @@ function wrapperScript(downstream) {
 # a plugin is installed into a directory of its own: the newest one is the one
 # to run, and the path below is only for a copy kept outside the plugin cache.
 # If neither can be found, the statusline runs without the collector.
-SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)
+CACHE="$HOME/.claude/plugins/cache"
+SINK=$(ls -1dt "$CACHE"/*/cclimit/*/scripts/sink.mjs "$CACHE"/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)
 [ -f "$SINK" ] || SINK=${shellQuote(SINK)}
 if [ -f "$SINK" ]; then
   ${collector}

@@ -2,7 +2,7 @@
 # The hot path. This runs before every tool call, so in the normal case — no
 # breach — it must cost nothing: two file tests and an exit, no Node process.
 #
-# The breach file is written by bin/sink.mjs from the statusline payload. Its
+# The breach file is written by scripts/sink.mjs from the statusline payload. Its
 # existence is the only signal checked here; gate.mjs re-reads the config and
 # makes the actual decision, because `/cclimit go` can lift a breach seconds
 # before the next statusline render rewrites the file.
@@ -28,7 +28,11 @@ command -v node >/dev/null 2>&1 || exit 0
 # unused until the next restart.
 GATE="$(dirname "$0")/gate.mjs"
 if [ -z "$CCLIMIT_NO_FORWARD" ]; then
-  NEWER=$(ls -1dt "${CCLIMIT_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"/plugins/cache/*/cclimit/*/bin/gate.mjs 2>/dev/null | head -1)
+  CACHE="${CCLIMIT_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}/plugins/cache"
+  # Versions installed before the executables moved out of bin/ are still
+  # copies worth handing over to, so both layouts are searched together and
+  # the most recently installed one wins whichever shape it has.
+  NEWER=$(ls -1dt "$CACHE"/*/cclimit/*/scripts/gate.mjs "$CACHE"/*/cclimit/*/bin/gate.mjs 2>/dev/null | head -1)
   # A half-written update is a directory that exists and does not run, and a
   # gate that cannot run is a gate that stops nothing.
   if [ -n "$NEWER" ] && [ "$NEWER" -nt "$GATE" ] && [ -f "$(dirname "$NEWER")/lib.mjs" ] &&

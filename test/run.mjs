@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.join(HERE, '..', 'bin');
+const BIN = path.join(HERE, '..', 'scripts');
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'cclimit-test-'));
 const CONFIG = path.join(ROOT, '.claude');
 const STATE = path.join(CONFIG, 'cclimit');
@@ -290,7 +290,7 @@ check('the slash commands that turn cclimit off are never blocked', () => {
 check('nothing but a slash command gets past the gate', () => {
   feed(90, 10);
   const cases = [
-    ['PreToolUse', { tool_name: 'Bash', tool_input: { command: 'node /plugins/cclimit/bin/cclimit.mjs off' } }],
+    ['PreToolUse', { tool_name: 'Bash', tool_input: { command: 'node /plugins/cclimit/scripts/cclimit.mjs off' } }],
     ['PreToolUse', { tool_name: 'Bash', tool_input: { command: 'cat /home/me/cclimit/notes.md' } }],
     ['PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/home/me/cclimit/README.md' } }],
     ['PreToolUse', { tool_name: 'Bash', tool_input: { command: 'git commit -m "cclimit: fix the gate"' } }],
@@ -838,7 +838,7 @@ check('every documented subcommand has a command file that forwards to it', () =
     const file = path.join(dir, `${name}.md`);
     if (!fs.existsSync(file)) throw new Error(`no command file for /cclimit ${name}`);
     const text = fs.readFileSync(file, 'utf8');
-    if (!text.includes('${CLAUDE_PLUGIN_ROOT}/bin/cclimit.mjs')) throw new Error(`${name}.md does not call the binary`);
+    if (!text.includes('${CLAUDE_PLUGIN_ROOT}/scripts/cclimit.mjs')) throw new Error(`${name}.md does not call the binary`);
     if (!text.includes(`cclimit.mjs" ${name} $ARGUMENTS`)) throw new Error(`${name}.md forwards the wrong subcommand`);
     if (!/^allowed-tools: Bash\(node:\*\)$/m.test(text)) throw new Error(`${name}.md is missing allowed-tools`);
   }
@@ -881,14 +881,18 @@ check('every subcommand the plugin prints at the user has a command file', () =>
 // Claude Code resolves the plugin directory once per session, so without this a
 // fix only reaches a running session after a restart.
 
-const FAKE_BIN = path.join(CONFIG, 'plugins', 'cache', 'market', 'cclimit', '9.9.9', 'bin');
+const FAKE_VERSION = path.join(CONFIG, 'plugins', 'cache', 'market', 'cclimit', '9.9.9');
+const FAKE_BIN = path.join(FAKE_VERSION, 'scripts');
 
-function plantNewer(file, body, { newer = true } = {}) {
-  fs.mkdirSync(FAKE_BIN, { recursive: true });
+// `layout` is which directory the planted copy lives in: bin/ up to 0.5.1,
+// scripts/ after it. Both are real shapes to find in a plugin cache.
+function plantNewer(file, body, { newer = true, layout = 'scripts' } = {}) {
+  const dir = path.join(FAKE_VERSION, layout);
+  fs.mkdirSync(dir, { recursive: true });
   // A copy is only trusted if it looks whole, so a plausible one needs the
   // module its real counterpart imports.
-  fs.writeFileSync(path.join(FAKE_BIN, 'lib.mjs'), 'export const planted = true;\n');
-  const target = path.join(FAKE_BIN, file);
+  fs.writeFileSync(path.join(dir, 'lib.mjs'), 'export const planted = true;\n');
+  const target = path.join(dir, file);
   fs.writeFileSync(target, body, { mode: 0o755 });
   const own = fs.statSync(path.join(BIN, file)).mtime;
   const when = new Date(own.getTime() + (newer ? 60_000 : -60_000));
@@ -973,6 +977,31 @@ check('the gate still says nothing when there is no breach to act on', () => {
     encoding: 'utf8',
   });
   eq(res.stdout, '', 'stdout');
+  unplant();
+});
+
+// The executables moved out of bin/ in 0.5.2. Every version installed before
+// that is still sitting in the cache with a working copy in it, and a session
+// that started on one has to be able to hand over to the other in both
+// directions.
+
+check('a copy installed under the old bin/ layout is still handed over to', () => {
+  plantNewer('cclimit.mjs', "process.stdout.write('from the bin copy\\n');\n", { layout: 'bin' });
+  eq(cli('status'), 'from the bin copy\n', 'stdout');
+  unplant();
+});
+
+check('the gate hands over to a newer copy left under the old bin/ layout', () => {
+  feed(90, 10);
+  plantNewer('gate.mjs', "process.stdout.write(JSON.stringify({ continue: false, stopReason: 'bin gate' }));\n", {
+    layout: 'bin',
+  });
+  const res = spawnSync(path.join(BIN, 'gate.sh'), [], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+    env,
+    encoding: 'utf8',
+  });
+  eq(JSON.parse(res.stdout).stopReason, 'bin gate', 'stopReason');
   unplant();
 });
 

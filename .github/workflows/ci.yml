@@ -27,14 +27,14 @@ jobs:
       # under the oldest supported runtime is part of the contract.
       - name: parse every script
         run: |
-          for f in bin/*.mjs test/run.mjs docs/logo/gen.mjs; do
+          for f in scripts/*.mjs test/run.mjs docs/logo/gen.mjs; do
             node --check "$f"
           done
 
       # gate.sh is the hot path and runs on every tool call. A syntax error in
       # it would break every session that installs the plugin.
       - name: the hot path is valid shell
-        run: sh -n bin/gate.sh
+        run: sh -n scripts/gate.sh
 
       # Builds its own config directory in a temp path and points
       # CCLIMIT_CONFIG_DIR at it, so no real ~/.claude is read or written.
@@ -70,6 +70,24 @@ jobs:
               if (!fs.existsSync(`commands/${name}.md`)) {
                 throw new Error(`README promises /cclimit ${name} but commands/${name}.md is missing`);
               }
+            }
+            // claude.ai refuses to distribute a plugin with a top-level bin/
+            // through organization settings (marketplace_sync_bin_directory_not_allowed),
+            // so the executables live in scripts/ and have to stay there.
+            if (fs.existsSync("bin")) throw new Error("a top-level bin/ is not allowed: use scripts/");
+            // Every path a hook or a command runs has to be a file that ships,
+            // or the plugin installs and does nothing.
+            const runs = [];
+            for (const event of Object.values(hooks.hooks).flat()) {
+              for (const h of event.hooks || []) runs.push(h.command);
+            }
+            for (const file of fs.readdirSync("commands")) {
+              runs.push(...fs.readFileSync(`commands/${file}`, "utf8").matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"`\s]+/g));
+            }
+            for (const run of runs.map(String)) {
+              const target = run.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/(\S+)/);
+              if (!target) throw new Error(`not rooted in the plugin: ${run}`);
+              if (!fs.existsSync(target[1])) throw new Error(`${target[1]} is referenced but does not ship`);
             }
             const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
             if (!changelog.includes(`## ${plugin.version}`)) {
