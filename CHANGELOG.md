@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.7
+
+- `/cclimit go` no longer stands down until a moment that has already passed. A
+  session left idle through a window rollover kept a breach file naming a window
+  that was already over, and `go` took its reset time at face value: the snooze
+  expired before it was written, the next tool call was stopped again, and the
+  line printed said otherwise. Only a reset time still ahead is taken, and the
+  live reading is the fallback.
+- The statusline wrapper keeps its executable bit. `writeFileSync` applies a
+  mode only when it creates a file, so a wrapper that arrived without the bit —
+  copied between machines, restored from an archive, checked out of a dotfiles
+  repo — kept losing it through every rewrite, and Claude Code runs that file by
+  path. An unrunnable wrapper is no collector, and no collector is no gate.
+- Both hooks carry an explicit ten-second timeout. The default for a command
+  hook is 600 seconds on `PreToolUse`, which runs before every single tool call;
+  the gate is two file tests and, at worst, one short Node run, and nothing it
+  does is worth a stalled session.
+- A blocked prompt sends `suppressOriginalPrompt` at the top level as well as
+  under `hookSpecificOutput`. The hooks reference lists it beside `decision` and
+  `reason`, which are top-level, and nests the fields either side of it; sending
+  both costs a few bytes and cannot land on the wrong one.
+- `evals/` holds three cases for the one part of this plugin a model has any say
+  over: relaying a command's output untouched, relaying its error plus one line
+  of guidance, and handing over the command rather than releasing the brake
+  itself when asked to turn cclimit off.
+
 ## 0.5.6
 
 - A `warn` rings once a window instead of once a tool call. It blocks nothing,
