@@ -24,11 +24,10 @@
   <a href="#commands">Commands</a> ·
   <a href="#the-ceiling">The ceiling</a> ·
   <a href="#the-heads-up">The heads-up</a> ·
+  <a href="#when-the-window-resets">When it resets</a> ·
   <a href="#the-three-actions">The three actions</a> ·
   <a href="#running-cheaper-instead-of-stopping">Running cheaper</a> ·
-  <a href="#config">Config</a> ·
-  <a href="#how-it-fails">How it fails</a> ·
-  <a href="#limits-worth-knowing-before-you-install-it">Limits</a>
+  <a href="#config">Config</a>
 </p>
 
 ---
@@ -295,54 +294,10 @@ your line cost money, so set them lower than feels necessary.
 ```
 
 Also in that directory: `limits.json` (the last reading), `history.json` (the
-trail behind it, for the climb rate), `breach.json` (present only while a line
-is being held), `notice.json` (which windows have had their heads-up, and which have been told
-about a downgrade), `resume.json` (a reset waiting to be announced),
-`statusline-wrap.sh` (written by `install`).
-Delete the directory to reset.
-
-## How it fails
-
-It fails open, always. No usage data, no config, an unreadable file, a reading
-older than `maxStaleSeconds` — every one of those means "carry on", never "block".
-A plugin that watches your spending must not be the reason a session stops
-working.
-
-Accounts billed through an API key, Bedrock or Vertex have no plan windows at
-all: the payload has no `rate_limits`, `/cclimit status` says so, and nothing is
-ever held.
-
-## Limits worth knowing before you install it
-
-- **The check runs before a turn or a tool call, not during one.** A single call
-  already in flight can carry usage past your line. Set the line where a slight
-  overshoot is still fine.
-- **It depends on the statusline rendering.** No render, no fresh reading, and
-  after `maxStaleSeconds` cclimit stops holding anything. That is deliberate.
-- **A ceiling is held the same way, and is worth no more than the last
-  reading.** It is a brake, not a guarantee: it fails open exactly like the
-  line, so a session whose statusline has stopped rendering is a session with no
-  ceiling. Leaving work unattended is safe against overshoot, not against the
-  plugin being unable to see.
-- **The percentages are the ones Claude Code publishes**, rounded from floats
-  like `56.00000000000001`. Comparison is `>=`, so a line at 85 fires at exactly
-  85.0.
-- **`ask` re-asks per tool call.** See above.
-- **Downgrading rewrites a tool call's input**, which needs a Claude Code new
-  enough to take a `model` on a subagent launch. If a launch starts erroring
-  once downgrading is on, `/cclimit downgrade off` puts it back. Everything
-  else here works the same on any version.
-- **The session's own model is yours to change.** Nothing in the hook interface
-  can move it, so downgrading covers subagents and tells you about the rest.
-- **The window state is account-wide**, so a line crossed in one session holds in
-  every session on that machine. That is the correct behaviour — the usage is
-  shared — but it can be surprising the first time.
-
-## What is not in yet
-
-Per-project limits — one line for the repo that burns the plan and another for
-everything else. The state here is account-wide, which is what the usage
-actually is, so this needs a second layer rather than a different number.
+trail behind it, for the climb rate and the sparkline), `breach.json` (present
+only while a line is being held), `notice.json` (which windows have had their
+heads-up), `resume.json` (a reset waiting to be announced),
+`statusline-wrap.sh` (written by `install`). Delete the directory to reset.
 
 ## Support
 
