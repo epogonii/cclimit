@@ -25,6 +25,7 @@
   <a href="#the-ceiling">The ceiling</a> ·
   <a href="#the-heads-up">The heads-up</a> ·
   <a href="#the-three-actions">The three actions</a> ·
+  <a href="#running-cheaper-instead-of-stopping">Running cheaper</a> ·
   <a href="#config">Config</a> ·
   <a href="#how-it-fails">How it fails</a> ·
   <a href="#limits-worth-knowing-before-you-install-it">Limits</a>
@@ -104,6 +105,8 @@ If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11
 | `/cclimit notice 5h 75` | say something at 75% without blocking anything — `off` removes it |
 | `/cclimit go` | continue until the current window resets |
 | `/cclimit action stop\|ask\|warn` | what a crossing does — see below |
+| `/cclimit downgrade sonnet` | past the line, run subagents cheaper instead of stopping — `off` removes it |
+| `/cclimit config` | every setting and the command that changes it |
 | `/cclimit on` / `/cclimit off` | reinstate / disable, without uninstalling anything |
 | `/cclimit install` / `/cclimit uninstall` | wire the collector into the statusline, or remove it |
 
@@ -115,6 +118,8 @@ cclimit is on · action: stop
   5h  ███████████████████░░░░│░  79% used
       stop at 85% · ceiling 95% · notice at 70%
       climbing 0.3%/min — 95% in about 61m · resets Aug 26, 13:00 (in 1h 2m)
+      at this rate about 97% by reset
+      last 60m  ▃▃▂▂▄▅▅▇██▇▅▄▃▃▂▂▁▁▁▂▃▄▄▅▅▄▃▂▂
 
   7d  ████████░░░░░░░░░░░░░░│░░  35% used
       stop at 90% · no notice
@@ -123,7 +128,11 @@ cclimit is on · action: stop
 
 The tick in the bar is where the work stops — the ceiling if you have one, the
 line otherwise. The climb rate only appears once there are enough readings
-behind it to mean something.
+behind it to mean something, and the projection under it only while the reset
+is close enough for the current pace to say anything about it — which is why
+the 7-day window rarely gets one. The sparkline is the last hour of spending,
+one cell per two minutes, drawn from what was spent inside each cell rather
+than the total it stood at.
 
 Claude Code namespaces plugin commands, so each of these is really
 `/cclimit:status`, `/cclimit:go` and so on — which is what the `/` menu shows
@@ -205,6 +214,20 @@ twice — a warning repeated at every tool call is a warning nobody reads. Under
 There is none until you set one, it has to sit below the line, and it decides
 nothing — it is the only number here that exists purely to be read.
 
+## When the window resets
+
+The window that stopped you turns over on its own, and the last thing cclimit
+said about it was that it was full. So it says one more thing when it is not:
+
+```
+cclimit: the 5h window reset — usage is at 4% of your plan. It was at 91% before the reset.
+Nothing is being held. Work stops again at 85%. The new window resets Aug 26, 18:00.
+```
+
+Said once, on the first prompt after the reset, however many hours later that
+is. A window nobody was waiting on — one that never reached its notice or its
+line — resets in silence.
+
 ## The three actions
 
 | | what a crossing does | you keep the turn |
@@ -229,6 +252,24 @@ usage stands. For people who want the heads-up and not the brakes.
 
 All three describe what happens at the *line*. A ceiling always stops.
 
+## Running cheaper instead of stopping
+
+```
+/cclimit downgrade sonnet     past the line, subagents run on sonnet
+/cclimit downgrade off        back to stopping (the default)
+```
+
+Off unless you ask for it. With it on, crossing the line stops nothing: every
+subagent started from there on has its model rewritten to the cheaper one, and
+the prompt is told once that this is happening. A ceiling still stops
+everything — that is what a ceiling is for.
+
+What it cannot do is move *your* session onto the cheaper model. A hook can
+rewrite the input of a tool call, which is where a subagent's model lives, and
+nothing in the hook interface can change the model of the session itself. So the
+message says `/model sonnet` and leaves that key press to you. Subagents are
+where the fan-out spending is anyway; this is the part worth automating.
+
 ## Where the line should sit
 
 Defaults are 85% of the 5-hour window and 90% of the 7-day one. The 5-hour window
@@ -247,6 +288,7 @@ your line cost money, so set them lower than feels necessary.
   "thresholds": { "five_hour": 85, "seven_day": 90 },
   "ceilings": { "five_hour": null, "seven_day": null },
   "notices": { "five_hour": null, "seven_day": null },
+  "downgrade": null,
   "snoozeUntil": null,
   "maxStaleSeconds": 120
 }
@@ -254,7 +296,8 @@ your line cost money, so set them lower than feels necessary.
 
 Also in that directory: `limits.json` (the last reading), `history.json` (the
 trail behind it, for the climb rate), `breach.json` (present only while a line
-is being held), `notice.json` (which windows have had their heads-up),
+is being held), `notice.json` (which windows have had their heads-up, and which have been told
+about a downgrade), `resume.json` (a reset waiting to be announced),
 `statusline-wrap.sh` (written by `install`).
 Delete the directory to reset.
 
@@ -291,8 +334,9 @@ ever held.
 
 ## What is not in yet
 
-Auto-resume the moment the window resets (`StopFailure` + a scheduled wake-up),
-and dropping to a cheaper model at the line instead of stopping. Both are next.
+Per-project limits — one line for the repo that burns the plan and another for
+everything else. The state here is account-wide, which is what the usage
+actually is, so this needs a second layer rather than a different number.
 
 ## Support
 

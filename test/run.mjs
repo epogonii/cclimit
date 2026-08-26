@@ -916,6 +916,206 @@ check('the gate still says nothing when there is no breach to act on', () => {
   unplant();
 });
 
+// --- where the window is heading -------------------------------------------
+
+check('status projects where the window lands at the current rate', () => {
+  ceilingOff();
+  // A tenth of a point a minute, with an hour to run: 21% now, about 27% by
+  // the time the window turns over.
+  writeHistory(Array.from({ length: 11 }, (_, i) => ({ ts: NOW - (10 - i) * 60, five_hour: 20 + i / 10, seven_day: 10 })));
+  feed(21, 10);
+  const text = cli('status');
+  if (!/at this rate about 27% by reset/.test(text)) throw new Error(`no projection in status: ${text}`);
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
+check('a window on course to run out says so instead of a number', () => {
+  ceilingOff();
+  writeHistory(Array.from({ length: 11 }, (_, i) => ({ ts: NOW - (10 - i) * 60, five_hour: 70 + i, seven_day: 10 })));
+  feed(79, 10);
+  const text = cli('status');
+  if (!/runs out before it resets/.test(text)) throw new Error(`no warning in status: ${text}`);
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
+check('the 7-day window gets no projection, because the rate cannot support one', () => {
+  ceilingOff();
+  writeHistory(Array.from({ length: 11 }, (_, i) => ({ ts: NOW - (10 - i) * 60, five_hour: 20 + i / 10, seven_day: 10 + i / 10 })));
+  feed(21, 11);
+  const text = cli('status');
+  const projections = text.match(/at this rate/g) || [];
+  if (projections.length !== 1) throw new Error(`expected one projection, got ${projections.length}: ${text}`);
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
+check('status draws the last stretch of burn as a sparkline', () => {
+  ceilingOff();
+  // Half an hour of readings with the spending bunched in the middle.
+  writeHistory(
+    Array.from({ length: 31 }, (_, i) => ({
+      ts: NOW - (30 - i) * 60,
+      five_hour: 40 + (i < 10 ? i * 0.1 : i < 20 ? 1 + (i - 10) * 0.5 : 6 + (i - 20) * 0.1),
+      seven_day: 10,
+    }))
+  );
+  feed(47, 10);
+  const text = cli('status');
+  if (!/last 30m/.test(text)) throw new Error(`no span label on the sparkline: ${text}`);
+  if (!/[▁-█]{30}/.test(text)) throw new Error(`no sparkline in status: ${text}`);
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
+// --- a window that has reset -----------------------------------------------
+
+function feedWindows(five, fiveReset, seven, sevenReset) {
+  return run(
+    'sink.mjs',
+    [],
+    JSON.stringify({
+      model: { id: 'claude-opus-5', display_name: 'Opus 5' },
+      session_id: 'test-session',
+      rate_limits: {
+        five_hour: { used_percentage: five, resets_at: fiveReset },
+        seven_day: { used_percentage: seven, resets_at: sevenReset },
+      },
+    })
+  );
+}
+
+function resetResume() {
+  fs.rmSync(path.join(STATE, 'resume.json'), { force: true });
+  fs.rmSync(path.join(STATE, 'breach.json'), { force: true });
+  resetNotices();
+}
+
+check('a window that was full says so when it resets', () => {
+  resetResume();
+  feedWindows(85, NOW + 60, 10, NOW + 86400);
+  feedWindows(4, NOW + 3600, 10, NOW + 86400);
+  eq(breachFile()?.kind, 'resume', 'breach kind');
+
+  const res = gate('UserPromptSubmit', { prompt: 'back to the refactor' });
+  if (res.decision) throw new Error(`a reset blocked a prompt: ${JSON.stringify(res)}`);
+  if (!/window reset/.test(res.systemMessage)) throw new Error(`no reset in the message: ${res.systemMessage}`);
+  if (!/85%/.test(res.systemMessage)) throw new Error(`no before-and-after: ${res.systemMessage}`);
+  eq(breachFile(), null, 'breach file');
+});
+
+check('the reset is announced once, not on every prompt after it', () => {
+  resetResume();
+  feedWindows(85, NOW + 60, 10, NOW + 86400);
+  feedWindows(4, NOW + 3600, 10, NOW + 86400);
+  gate('UserPromptSubmit', { prompt: 'carry on' });
+  feedWindows(5, NOW + 3600, 10, NOW + 86400);
+  eq(breachFile(), null, 'breach file');
+  eq(gate('UserPromptSubmit', { prompt: 'carry on' }), null, 'second prompt');
+});
+
+check('a window nobody was waiting on resets quietly', () => {
+  resetResume();
+  feedWindows(20, NOW + 60, 10, NOW + 86400);
+  feedWindows(2, NOW + 3600, 10, NOW + 86400);
+  eq(breachFile(), null, 'breach file');
+});
+
+check('the next window to fill up is announced in its turn', () => {
+  resetResume();
+  feedWindows(85, NOW + 60, 10, NOW + 86400);
+  feedWindows(4, NOW + 3600, 10, NOW + 86400);
+  gate('UserPromptSubmit', { prompt: 'carry on' });
+  feedWindows(86, NOW + 3600, 10, NOW + 86400);
+  feedWindows(3, NOW + 7200, 10, NOW + 86400);
+  eq(breachFile()?.kind, 'resume', 'breach kind');
+  gate('UserPromptSubmit', { prompt: 'carry on' });
+  resetResume();
+});
+
+// --- running cheaper instead of stopping ------------------------------------
+
+function downgradeOff() {
+  cli('downgrade', 'off');
+  ceilingOff();
+  resetNotices();
+}
+
+check('downgrading is off unless it is asked for', () => {
+  const config = JSON.parse(cli('status', '--json')).config;
+  eq(config.downgrade, null, 'downgrade');
+});
+
+check('a subagent past the line is moved onto the cheaper model', () => {
+  downgradeOff();
+  cli('downgrade', 'sonnet');
+  feed(85, 10);
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'go and read the tests', subagent_type: 'general-purpose' } });
+  eq(res.hookSpecificOutput?.updatedInput?.model, 'sonnet', 'model');
+  eq(res.hookSpecificOutput?.updatedInput?.prompt, 'go and read the tests', 'prompt');
+  if (res.continue === false) throw new Error(`downgrading stopped the turn: ${JSON.stringify(res)}`);
+  downgradeOff();
+});
+
+check('a subagent already on a cheaper model is left alone', () => {
+  downgradeOff();
+  cli('downgrade', 'sonnet');
+  feed(85, 10);
+  eq(gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x', model: 'haiku' } }), null, 'response');
+  downgradeOff();
+});
+
+check('an ordinary tool call past the line runs untouched while downgrading', () => {
+  downgradeOff();
+  cli('downgrade', 'sonnet');
+  feed(85, 10);
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  downgradeOff();
+});
+
+check('the prompt is told once that the session keeps its own model', () => {
+  downgradeOff();
+  cli('downgrade', 'sonnet');
+  feed(85, 10);
+  const first = gate('UserPromptSubmit', { prompt: 'keep going' });
+  if (first.decision) throw new Error(`downgrading blocked a prompt: ${JSON.stringify(first)}`);
+  if (!/\/model sonnet/.test(first.systemMessage)) throw new Error(`no way to move the session: ${first.systemMessage}`);
+  feed(86, 10);
+  eq(gate('UserPromptSubmit', { prompt: 'and again' }), null, 'second prompt');
+  downgradeOff();
+});
+
+check('a ceiling still stops everything while downgrading', () => {
+  downgradeOff();
+  cli('downgrade', 'sonnet');
+  cli('ceiling', '5h', '95');
+  feed(96, 10);
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } });
+  eq(res.continue, false, 'continue');
+  downgradeOff();
+});
+
+check('downgrade takes a model it knows or nothing at all', () => {
+  downgradeOff();
+  const res = run('cclimit.mjs', ['downgrade', 'gpt']);
+  if (res.status === 0) throw new Error('accepted a model it cannot set');
+  eq(JSON.parse(cli('status', '--json')).config.downgrade, null, 'downgrade');
+});
+
+// --- every setting on one screen --------------------------------------------
+
+check('the config screen names every knob and how to turn it', () => {
+  const text = cli('config');
+  for (const row of ['Enabled', 'At the line', 'Downgrade instead of stopping', 'Line (5h)', 'Ceiling (7d)', 'Heads-up (5h)', 'Snoozed until']) {
+    if (!text.includes(row)) throw new Error(`no "${row}" row: ${text}`);
+  }
+  for (const how of ['/cclimit action', '/cclimit ceiling 7d', '/cclimit notice 5h', '/cclimit downgrade']) {
+    if (!text.includes(how)) throw new Error(`no command for a row: ${how}`);
+  }
+});
+
+check('the config file is still one command away', () => {
+  const text = cli('config', 'path').trim();
+  if (!text.endsWith('config.json')) throw new Error(`not a config path: ${text}`);
+});
+
 fs.rmSync(ROOT, { recursive: true, force: true });
 
 if (failures.length) {

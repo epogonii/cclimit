@@ -13,11 +13,16 @@ import {
   loadBreach,
   clearBreach,
   loadHistory,
+  loadNotices,
   markNoticed,
+  disarmResume,
+  cheaperModel,
   burnRate,
   minutesTo,
   breachMessage,
   noticeMessage,
+  resumeMessage,
+  downgradeMessage,
 } from './lib.mjs';
 
 function allow() {
@@ -96,6 +101,14 @@ if (breach.kind === 'notice') {
   });
 }
 
+// The reset announcement is settled the same way and for the same reason: it
+// decides nothing, and it is worth saying exactly once.
+if (breach.kind === 'resume') {
+  disarmResume(breach.window);
+  clearBreach();
+  emit({ systemMessage: resumeMessage(breach), suppressOutput: true });
+}
+
 let threshold = null;
 let kind = null;
 if (typeof ceiling === 'number' && breach.used_percentage >= ceiling) {
@@ -123,6 +136,37 @@ const tool = event === 'PreToolUse' ? payload.tool_name : null;
 // A subagent launch is not one tool call, it is a whole session's worth of
 // them, so it gets said out loud rather than folded into the generic line.
 const isFanOut = tool === 'Task' || tool === 'Agent';
+
+// Downgrading answers the line and only the line. A ceiling is the number that
+// means stop, and moving the work onto a cheaper model is still doing the work.
+if (kind === 'line' && typeof config.downgrade === 'string') {
+  const model = config.downgrade;
+
+  // A subagent is the one thing a hook can actually move: its model is part of
+  // the tool input, and the input is the one field PreToolUse can rewrite.
+  if (event === 'PreToolUse' && isFanOut) {
+    const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {};
+    const target = cheaperModel(input.model, model);
+    if (!target) allow();
+    emit({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, model: target } },
+      systemMessage: `cclimit: past your ${breach.label} line \u2014 this subagent runs on ${target}.`,
+      suppressOutput: true,
+    });
+  }
+
+  // Nothing here can move the session's own model, so the prompt gets the one
+  // sentence that says so. Once per window: it is advice, not a decision, and
+  // advice repeated on every prompt is just noise in front of the work.
+  if (event === 'UserPromptSubmit') {
+    const key = `downgrade:${breach.window}`;
+    if (loadNotices()[key] === (breach.resets_at ?? 0)) allow();
+    markNoticed(key, breach.resets_at);
+    emit({ systemMessage: downgradeMessage({ ...breach, threshold }, config), suppressOutput: true });
+  }
+
+  allow();
+}
 
 // Only worth computing while the offer to continue is still on the table.
 let headroom;

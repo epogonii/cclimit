@@ -17,8 +17,11 @@ import {
   STATE_DIR,
   LIMITS_FILE,
   loadConfig,
+  loadLimits,
   evaluate,
   pendingNotice,
+  armResume,
+  pendingResume,
   writeBreach,
   clearBreach,
   recordHistory,
@@ -64,12 +67,18 @@ try {
   const config = loadConfig();
   const breach = evaluate(rateLimits, config);
 
+  // Read before the write below replaces it: a window rolling over is only
+  // visible as the difference between two readings, and there is no second
+  // chance to see it.
+  const previous = rateLimits ? loadLimits()?.rate_limits ?? null : null;
+
   if (rateLimits) {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(LIMITS_FILE, JSON.stringify({ rate_limits: rateLimits, ts: Math.floor(Date.now() / 1000) }) + '\n');
     // The trail behind the last reading is what turns "you are at 90%" into
     // "the ceiling is twenty minutes away".
     recordHistory(rateLimits);
+    armResume(previous, rateLimits, config);
   }
 
   // The breach file is the gates' fast path: its mere existence is the signal,
@@ -78,10 +87,15 @@ try {
   // the only thing that wakes the gate. It is written until the gate has said
   // it once, and not after, so the hot path goes cold again straight away
   // rather than starting Node on every call between here and the line.
+  //
+  // Order matters: a hold outranks a heads-up, and both outrank the news that
+  // some other window has reset. A resume that loses that contest is not
+  // queued — by the time the winner is settled, it is no longer news.
   if (breach) writeBreach(breach);
   else {
     const notice = pendingNotice(rateLimits, config);
-    if (notice) writeBreach(notice);
+    const resume = notice ? null : pendingResume(rateLimits, config);
+    if (notice || resume) writeBreach(notice || resume);
     else clearBreach();
   }
 

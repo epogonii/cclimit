@@ -22,6 +22,7 @@ export const LIMITS_FILE = path.join(STATE_DIR, 'limits.json');
 export const BREACH_FILE = path.join(STATE_DIR, 'breach.json');
 export const HISTORY_FILE = path.join(STATE_DIR, 'history.json');
 export const NOTICE_FILE = path.join(STATE_DIR, 'notice.json');
+export const RESUME_FILE = path.join(STATE_DIR, 'resume.json');
 export const WRAP_FILE = path.join(STATE_DIR, 'statusline-wrap.sh');
 export const SETTINGS_FILE = path.join(CONFIG_DIR, 'settings.json');
 
@@ -45,6 +46,10 @@ export const DEFAULTS = {
   // default, because an unasked-for interruption is the thing this plugin is
   // supposed to be careful about.
   notices: { five_hour: null, seven_day: null },
+  // A model to push subagents onto once usage is past the line, instead of
+  // stopping there. Off by default: quietly changing which model does the work
+  // is a bigger thing to do unasked than declining to do it at all.
+  downgrade: null,
   // Set by `/cclimit go` to a unix timestamp — usually the reset time of the
   // window that fired. Until then the gates stay quiet.
   snoozeUntil: null,
@@ -77,6 +82,31 @@ export function loadConfig() {
 export function saveConfig(config) {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
+}
+
+// The models cclimit is willing to push work down onto, cheapest first. Only
+// downward moves are ever made, so an already-cheap call is left alone.
+export const DOWNGRADE_MODELS = ['haiku', 'sonnet'];
+const MODEL_RANK = { haiku: 1, fable: 1, sonnet: 2, opus: 3 };
+
+function modelRank(name) {
+  const text = String(name || '').toLowerCase();
+  for (const [key, rank] of Object.entries(MODEL_RANK)) if (text.includes(key)) return rank;
+  return null;
+}
+
+// What `current` should be replaced with to reach `target`, or null for "leave
+// it alone" — already at or below the target, or a name this does not
+// recognise, which is somebody's deliberate choice and not ours to overrule.
+// An absent model means the call inherits the session's, so it is fair game.
+export function cheaperModel(current, target) {
+  if (!DOWNGRADE_MODELS.includes(target)) return null;
+  if (typeof current === 'string' && current && current !== 'inherit') {
+    const rank = modelRank(current);
+    if (rank === null) return null;
+    if (rank <= MODEL_RANK[target]) return null;
+  }
+  return target;
 }
 
 export function loadLimits() {
@@ -222,10 +252,95 @@ export function pendingNotice(rateLimits, config, now = Math.floor(Date.now() / 
   return worst;
 }
 
+// A window that has rolled over is worth one sentence, because the last thing
+// said about it was that it was full. Armed by the collector at the moment the
+// reset time changes — the only moment the change is visible — and said by the
+// gate whenever the user next turns up, which may be hours later.
+export function armResume(prev, rateLimits, config, now = Math.floor(Date.now() / 1000)) {
+  if (!prev || !rateLimits || !config.enabled) return null;
+
+  const armed = readJson(RESUME_FILE) || {};
+  let changed = false;
+  for (const key of Object.keys(WINDOWS)) {
+    const before = prev[key];
+    const after = rateLimits[key];
+    if (!before || !after) continue;
+    if (!Number.isFinite(before.resets_at) || !Number.isFinite(after.resets_at)) continue;
+    // A new reset time is what a rollover looks like; usage falling is what
+    // proves it was one rather than the window being extended.
+    if (after.resets_at <= before.resets_at) continue;
+    if (typeof before.used_percentage !== 'number' || typeof after.used_percentage !== 'number') continue;
+    if (after.used_percentage >= before.used_percentage) continue;
+
+    // Only windows that had something to say on the way up get to say anything
+    // on the way down. A window that reset from 12% was nobody's problem.
+    const line = config.thresholds?.[key];
+    const notice = config.notices?.[key];
+    const loud = typeof notice === 'number' ? notice : line;
+    if (typeof loud !== 'number' || before.used_percentage < loud) continue;
+
+    armed[key] = { resets_at: after.resets_at, from: before.used_percentage, ts: now };
+    changed = true;
+  }
+  if (!changed) return null;
+
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(RESUME_FILE, JSON.stringify(armed) + '\n');
+  } catch {
+    /* an announcement that cannot be recorded is one not made, never a block */
+  }
+  return armed;
+}
+
+export function pendingResume(rateLimits, config, now = Math.floor(Date.now() / 1000)) {
+  if (!rateLimits || typeof rateLimits !== 'object') return null;
+  if (!config.enabled) return null;
+
+  const armed = readJson(RESUME_FILE);
+  if (!armed || typeof armed !== 'object') return null;
+
+  for (const key of Object.keys(WINDOWS)) {
+    const record = armed[key];
+    const win = rateLimits[key];
+    if (!record || !win || typeof win.used_percentage !== 'number') continue;
+    // Armed against one particular window. If that one has itself reset while
+    // nobody was looking, the sentence is about a window two ago and is dropped.
+    if (win.resets_at !== record.resets_at) continue;
+    const line = config.thresholds?.[key];
+    // Back over the line already: the line has its own thing to say.
+    if (typeof line === 'number' && win.used_percentage >= line) continue;
+
+    return {
+      window: key,
+      label: WINDOWS[key].label,
+      used_percentage: win.used_percentage,
+      kind: 'resume',
+      threshold: typeof line === 'number' ? line : null,
+      from: record.from,
+      resets_at: win.resets_at,
+      ts: now,
+    };
+  }
+  return null;
+}
+
+export function disarmResume(key) {
+  const armed = readJson(RESUME_FILE) || {};
+  delete armed[key];
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(RESUME_FILE, JSON.stringify(armed) + '\n');
+  } catch {
+    /* nothing to undo */
+  }
+}
+
 // A short trail of readings, kept so the plugin can answer "will I get there"
 // with the rate usage is actually climbing at rather than a guess. Readings
-// arrive every statusline render, so a few dozen of them is minutes, not hours.
-export const HISTORY_LIMIT = 60;
+// arrive every statusline render — one every ten seconds — so the limit below is
+// about an hour of them, which is what the sparkline draws.
+export const HISTORY_LIMIT = 360;
 
 export function loadHistory() {
   const raw = readJson(HISTORY_FILE);
@@ -269,6 +384,65 @@ export function minutesTo(used, target, perMinute) {
   const left = target - used;
   if (left <= 0) return 0;
   return Math.max(1, Math.round(left / perMinute));
+}
+
+// Where the window lands at the current rate if nothing changes. Only answered
+// for a reset close enough for a half-hour sample to mean anything about it:
+// extrapolating this morning's pace across five more days of a weekly window
+// produces a number with no information in it.
+export const PROJECTION_HORIZON = 6 * 3600;
+
+export function projectedAtReset(used, resetsAt, perMinute, now = Math.floor(Date.now() / 1000)) {
+  if (!Number.isFinite(used) || !Number.isFinite(resetsAt)) return null;
+  if (!Number.isFinite(perMinute) || perMinute <= 0) return null;
+  const seconds = resetsAt - now;
+  if (seconds <= 0 || seconds > PROJECTION_HORIZON) return null;
+  return used + perMinute * (seconds / 60);
+}
+
+// The last hour of burn, one cell per bucket, drawn from what was gained inside
+// each bucket rather than the level it stood at — a climbing total drawn as a
+// level is a ramp, and a ramp says nothing about when the spending happened.
+const SPARK_CHARS = '\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588';
+
+export function sparkline(history, key, now = Math.floor(Date.now() / 1000), cells = 30, seconds = 3600) {
+  const points = (history || [])
+    .filter((e) => Number.isFinite(e?.ts) && typeof e?.[key] === 'number' && now - e.ts <= seconds)
+    .sort((a, b) => a.ts - b.ts);
+  if (points.length < 2) return null;
+
+  const start = points[0].ts;
+  const end = Math.max(now, points[points.length - 1].ts);
+  const span = end - start;
+  if (span < 120) return null;
+
+  // Readings are irregular and a session that was closed leaves gaps, so each
+  // bucket edge takes the last reading at or before it rather than assuming one.
+  const valueAt = (t) => {
+    let value = points[0][key];
+    for (const point of points) {
+      if (point.ts > t) break;
+      value = point[key];
+    }
+    return value;
+  };
+
+  const step = span / cells;
+  const deltas = [];
+  for (let i = 0; i < cells; i += 1) {
+    // A reset inside the hour shows up as a fall. Clamped, because "spent
+    // nothing" is the truthful shape of the bucket the window turned over in.
+    deltas.push(Math.max(0, valueAt(start + (i + 1) * step) - valueAt(start + i * step)));
+  }
+
+  const peak = Math.max(...deltas);
+  if (peak <= 0) return null;
+
+  return {
+    text: deltas.map((d) => SPARK_CHARS[Math.min(7, Math.round((d / peak) * 7))]).join(''),
+    minutes: Math.max(1, Math.round(span / 60)),
+    peak,
+  };
 }
 
 // Claude Code resolves ${CLAUDE_PLUGIN_ROOT} once, when a session starts, so a
@@ -422,5 +596,37 @@ export function noticeMessage(breach, { target, minutes } = {}) {
     `cclimit: ${breach.label} usage is at ${pct(breach.used_percentage)} of your plan.${wall}${reset}\n` +
     `Nothing is blocked — this is the heads-up, said once per window. ` +
     `Move it: /cclimit notice ${breach.label} <percent> — remove it: /cclimit notice ${breach.label} off`
+  );
+}
+
+// Said when a window that was full has rolled over. It is the only message here
+// that reports good news, so it leads with the fact and keeps the arithmetic to
+// one clause.
+export function resumeMessage(resume) {
+  const from = typeof resume.from === 'number' ? ` It was at ${pct(resume.from)} before the reset.` : '';
+  const line = typeof resume.threshold === 'number' ? ` Work stops again at ${resume.threshold}%.` : '';
+  const at = localTime(resume.resets_at);
+  const next = at ? ` The new window resets ${at}.` : '';
+  return (
+    `cclimit: the ${resume.label} window reset \u2014 usage is at ${pct(resume.used_percentage)} of your plan.${from}\n` +
+    `Nothing is being held.${line}${next}`
+  );
+}
+
+// Said once per window when the line is answered by moving work onto a cheaper
+// model instead of stopping. It has to be explicit that nothing was blocked and
+// that the main session is not covered, because neither is visible from here.
+export function downgradeMessage(breach, config) {
+  const model = config.downgrade;
+  const ceiling = config.ceilings?.[breach.window];
+  const stop = typeof ceiling === 'number' ? ` Your ceiling at ${ceiling}% still stops everything.` : '';
+  const at = localTime(breach.resets_at);
+  const reset = at ? ` Window resets ${at} (in ${untilReset(breach.resets_at)}).` : '';
+  return (
+    `cclimit: ${breach.label} usage is at ${pct(breach.used_percentage)} of your plan ` +
+    `(your limit: ${breach.threshold}%). Nothing is stopped \u2014 subagents started from here on ` +
+    `run on ${model}.${stop}${reset}\n` +
+    `This session keeps its own model: /model ${model} to move it too \u2014 ` +
+    `stop instead of downgrading: /cclimit downgrade off`
   );
 }

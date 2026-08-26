@@ -9,6 +9,8 @@
 //   cclimit ceiling 5h 99       the number /cclimit go cannot lift
 //   cclimit notice 5h 75        a heads-up before the line, said once per window
 //   cclimit action stop|ask|warn
+//   cclimit downgrade sonnet|haiku|off   run subagents cheaper instead of stopping
+//   cclimit config              every setting and the command that changes it
 //   cclimit go                  keep going until the window resets
 //   cclimit on | off
 //   cclimit install | uninstall
@@ -31,6 +33,9 @@ import {
   loadHistory,
   burnRate,
   minutesTo,
+  projectedAtReset,
+  sparkline,
+  DOWNGRADE_MODELS,
   clearBreach,
   evaluate,
   pct,
@@ -118,7 +123,7 @@ function status() {
     ? 'off'
     : config.snoozeUntil && now < config.snoozeUntil
       ? `snoozed until ${localTime(config.snoozeUntil)} (${untilReset(config.snoozeUntil)} left)`
-      : `on \u00b7 action: ${config.action}`;
+      : `on \u00b7 action: ${config.downgrade ? `downgrade to ${config.downgrade}` : config.action}`;
   lines.push(`cclimit is ${state}`);
 
   for (const [key, meta] of Object.entries(WINDOWS)) {
@@ -148,15 +153,35 @@ function status() {
     // room between here and the ceiling actually lasts.
     const rate = burnRate(history, key, now);
     const tail = [];
-    if (rate) {
+    // A rate that prints as 0.0%/min is a rate with nothing to say, and the
+    // number of minutes to a target the window will reset long before is worse
+    // than nothing: it invites planning around a wall that is never reached.
+    if (rate && rate >= 0.05) {
       const target = typeof ceiling === 'number' ? ceiling : 100;
       const minutes = minutesTo(win.used_percentage, target, rate);
-      const eta = minutes === null ? '' : minutes === 0 ? ' — already there' : ` — ${target}% in about ${minutes}m`;
+      const left = Number.isFinite(win.resets_at) ? (win.resets_at - now) / 60 : null;
+      const reachable = minutes !== null && (left === null || minutes <= left);
+      const eta = minutes === 0 ? ' — already there' : reachable ? ` — ${target}% in about ${minutes}m` : '';
       tail.push(`climbing ${rate.toFixed(1)}%/min${eta}`);
     }
     const at = localTime(win.resets_at);
     if (at) tail.push(`resets ${at} (in ${untilReset(win.resets_at)})`);
     if (tail.length) lines.push(`      ${tail.join(' \u00b7 ')}`);
+
+    // Where the window lands if the current pace holds. Said as a projection
+    // rather than a fact, because it is one — and never for a reset far enough
+    // away that the pace behind it has stopped meaning anything.
+    const projected = projectedAtReset(win.used_percentage, win.resets_at, rate, now);
+    if (projected !== null) {
+      lines.push(
+        `      ${projected >= 100 ? 'at this rate the window runs out before it resets' : `at this rate about ${Math.round(projected)}% by reset`}`
+      );
+    }
+
+    // The shape of the spending behind the number: where it was flat, where it
+    // was not. Drawn only when there is enough trail to draw.
+    const spark = sparkline(history, key, now);
+    if (spark) lines.push(`      last ${spark.minutes}m  ${spark.text}`);
   }
 
   if (!usage) {
@@ -169,9 +194,10 @@ function status() {
     lines.push(`Last reading is ${untilReset(now + (now - usage.ts))} old — the statusline may not be rendering.`);
   }
 
-  // A pending heads-up is not a hold — it is a sentence waiting to be said, and
-  // reporting it here as one would claim a block that is not happening.
-  if (breach && breach.kind !== 'notice') {
+  // Only a line and a ceiling hold anything. A heads-up and a reset notice ride
+  // in the same file, and reporting either of them here would claim a block
+  // that is not happening.
+  if (breach && (breach.kind === 'line' || breach.kind === 'ceiling')) {
     lines.push('');
     const what = breach.kind === 'ceiling' ? 'ceiling' : 'line';
     lines.push(`Currently holding: ${breach.label} at ${pct(breach.used_percentage)}, against your ${what} of ${breach.threshold}%.`);
@@ -307,6 +333,32 @@ function setAction(value) {
 
 // Keep the breach file honest after a config change, instead of waiting for the
 // next statusline render to catch up.
+// Off by default and stays off unless asked for by name: this is the one
+// setting that changes what the work is done by rather than whether it is done.
+function setDowngrade(valueRaw) {
+  const value = String(valueRaw || '').toLowerCase();
+  const config = loadConfig();
+
+  if (value === 'off' || value === 'none' || value === 'stop') {
+    config.downgrade = null;
+    saveConfig(config);
+    out(`cclimit: downgrade off. The line does what "action" says again: ${config.action}.`);
+    return;
+  }
+
+  if (!DOWNGRADE_MODELS.includes(value)) {
+    die(`Downgrade takes ${DOWNGRADE_MODELS.join(' or ')}, or off. Got: ${valueRaw ?? ''}`);
+  }
+
+  config.downgrade = value;
+  saveConfig(config);
+  out(
+    `cclimit: past your line, subagents will run on ${value} instead of stopping. ` +
+      `Your own session keeps whatever /model says \u2014 nothing here can change that. ` +
+      `A ceiling still stops everything.`
+  );
+}
+
 function refreshBreach(config) {
   const usage = currentUsage();
   const breach = usage ? evaluate(usage.rateLimits, config) : null;
@@ -470,6 +522,62 @@ function uninstall() {
   out('cclimit: collector removed and your statusline restored. The plugin itself is still installed; /cclimit install puts it back.');
 }
 
+// Every knob in one screen, with the command that turns each one. A plugin
+// command runs without a terminal of its own, so the arrow-key settings screen
+// Claude Code has for itself cannot exist here; a printed table can, and it has
+// the advantage of showing what to type rather than hiding it behind a keypress.
+function configTable() {
+  const config = loadConfig();
+  const off = '\u2014';
+
+  const rows = [
+    ['Enabled', String(config.enabled), '/cclimit on \u00b7 /cclimit off'],
+    ['At the line', config.action, '/cclimit action stop|ask|warn'],
+    ['Downgrade instead of stopping', config.downgrade || 'off', `/cclimit downgrade ${DOWNGRADE_MODELS.join('|')}|off`],
+    [null, null, null],
+  ];
+
+  for (const [key, meta] of Object.entries(WINDOWS)) {
+    const line = config.thresholds[key];
+    const ceiling = config.ceilings[key];
+    const notice = config.notices[key];
+    rows.push([`Line (${meta.label})`, typeof line === 'number' ? `${line}%` : off, `/cclimit ${meta.flag} <percent>`]);
+    rows.push([
+      `Ceiling (${meta.label})`,
+      typeof ceiling === 'number' ? `${ceiling}%` : 'off',
+      `/cclimit ceiling ${meta.flag} <percent>|off`,
+    ]);
+    rows.push([
+      `Heads-up (${meta.label})`,
+      typeof notice === 'number' ? `${notice}%` : 'off',
+      `/cclimit notice ${meta.flag} <percent>|off`,
+    ]);
+    rows.push([null, null, null]);
+  }
+
+  const snoozed = config.snoozeUntil && now < config.snoozeUntil;
+  rows.push([
+    'Snoozed until',
+    snoozed ? `${localTime(config.snoozeUntil)} (${untilReset(config.snoozeUntil)} left)` : off,
+    snoozed ? '/cclimit on to end it early' : '/cclimit go',
+  ]);
+
+  const width = Math.max(...rows.filter((r) => r[0]).map((r) => r[0].length));
+  const valueWidth = Math.max(...rows.filter((r) => r[1]).map((r) => r[1].length));
+
+  const lines = ['cclimit settings', ''];
+  for (const [name, value, how] of rows) {
+    if (!name) {
+      lines.push('');
+      continue;
+    }
+    lines.push(`  ${name.padEnd(width)}   ${value.padEnd(valueWidth)}   ${how}`);
+  }
+  lines.push('');
+  lines.push(`  Written to ${CONFIG_FILE}`);
+  out(lines.join('\n'));
+}
+
 const [first, second] = args;
 
 if (!first || first === 'status') status();
@@ -481,7 +589,9 @@ else if (first === 'uninstall') uninstall();
 else if (first === 'action') setAction(String(second || '').toLowerCase());
 else if (first === 'ceiling' && windowKey(second)) setCeiling(windowKey(second), args[2]);
 else if (first === 'notice' && windowKey(second)) setNotice(windowKey(second), args[2]);
-else if (first === 'config') out(CONFIG_FILE);
+else if (first === 'downgrade') setDowngrade(args[1]);
+else if (first === 'config' && second === 'path') out(CONFIG_FILE);
+else if (first === 'config' || first === 'settings') configTable();
 else if (windowKey(first) && second !== undefined) setThreshold(windowKey(first), second);
 else if (Number.isFinite(Number(first))) setThreshold('five_hour', first);
 // Every form listed here has to be one a user can actually type as a slash
@@ -489,5 +599,6 @@ else if (Number.isFinite(Number(first))) setThreshold('five_hour', first);
 else
   die(
     `cclimit: don't know "${args.join(' ')}". Try: status | 5h <percent> | 7d <percent> | ` +
-      `ceiling 5h <percent>|off | notice 5h <percent>|off | action stop|ask|warn | go | on | off | install | uninstall`
+      `ceiling 5h <percent>|off | notice 5h <percent>|off | action stop|ask|warn | downgrade sonnet|haiku|off | ` +
+      `config | go | on | off | install | uninstall`
   );
