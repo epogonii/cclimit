@@ -562,6 +562,22 @@ check('a line at or below the notice is refused', () => {
   resetNotices();
 });
 
+check('a pending heads-up is not reported as a hold', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(76, 10);
+  const text = cli('status');
+  if (/Currently holding/.test(text)) throw new Error(`a notice claimed a hold: ${text}`);
+  cli('notice', '5h', 'off');
+});
+
+check('status draws the window as a bar', () => {
+  feed(50, 10);
+  const text = cli('status');
+  if (!/\u2588+\u2591*/.test(text)) throw new Error(`no bar in status: ${text}`);
+  if (!text.includes('\u2502')) throw new Error(`no stop mark in status: ${text}`);
+});
+
 check('status names the notice', () => {
   resetNotices();
   cli('notice', '5h', '75');

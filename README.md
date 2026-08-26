@@ -107,6 +107,24 @@ If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11
 | `/cclimit on` / `/cclimit off` | reinstate / disable, without uninstalling anything |
 | `/cclimit install` / `/cclimit uninstall` | wire the collector into the statusline, or remove it |
 
+`/cclimit status` is the one worth looking at:
+
+```
+cclimit is on · action: stop
+
+  5h  ███████████████████░░░░│░  79% used
+      stop at 85% · ceiling 95% · notice at 70%
+      climbing 0.3%/min — 95% in about 61m · resets Aug 26, 13:00 (in 1h 2m)
+
+  7d  ████████░░░░░░░░░░░░░░│░░  35% used
+      stop at 90% · no notice
+      resets Aug 30, 22:00 (in 105h 1m)
+```
+
+The tick in the bar is where the work stops — the ceiling if you have one, the
+line otherwise. The climb rate only appears once there are enough readings
+behind it to mean something.
+
 Claude Code namespaces plugin commands, so each of these is really
 `/cclimit:status`, `/cclimit:go` and so on — which is what the `/` menu shows
 and completes. The two-word form above works because Claude Code reads the

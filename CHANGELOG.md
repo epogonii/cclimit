@@ -2,6 +2,9 @@
 
 ## 0.4.0
 
+- `status` redrawn: each window is a bar with a tick where the work stops,
+  and the numbers sit underneath it rather than in one comma-separated line.
+  A pending heads-up is no longer reported there as if it were holding work.
 - Notices. `/cclimit notice 5h 75` says something at 75% while the line still
   stops at 80%, so the stop is not the first news that usage was climbing. It
   blocks nothing, decides nothing, and is off until you set one.

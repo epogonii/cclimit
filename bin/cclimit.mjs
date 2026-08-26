@@ -82,6 +82,26 @@ function currentUsage() {
   return { rateLimits: stored.rate_limits, ts: stored.ts ?? 0 };
 }
 
+// A 24-cell gauge with a tick where the work stops, so the shape of the window
+// reads before any of the numbers do. The tick sits between cells rather than
+// on one, so it never costs a cell of the reading it marks.
+const BAR_CELLS = 24;
+
+function bar(used, line, ceiling) {
+  const cells = [];
+  const filled = Math.max(0, Math.min(BAR_CELLS, Math.round((used / 100) * BAR_CELLS)));
+  for (let i = 0; i < BAR_CELLS; i += 1) cells.push(i < filled ? '\u2588' : '\u2591');
+
+  // Ceiling first: where both exist, the ceiling is the one that actually stops
+  // everything, and two ticks in 24 cells is noise rather than information.
+  const stop = typeof ceiling === 'number' ? ceiling : typeof line === 'number' ? line : null;
+  if (stop !== null) {
+    const at = Math.max(0, Math.min(BAR_CELLS, Math.round((stop / 100) * BAR_CELLS)));
+    cells.splice(at, 0, '\u2502');
+  }
+  return cells.join('');
+}
+
 function status() {
   const config = loadConfig();
   const usage = currentUsage();
@@ -98,35 +118,45 @@ function status() {
     ? 'off'
     : config.snoozeUntil && now < config.snoozeUntil
       ? `snoozed until ${localTime(config.snoozeUntil)} (${untilReset(config.snoozeUntil)} left)`
-      : `on, action: ${config.action}`;
+      : `on \u00b7 action: ${config.action}`;
   lines.push(`cclimit is ${state}`);
 
   for (const [key, meta] of Object.entries(WINDOWS)) {
     const win = usage?.rateLimits?.[key];
     const limit = config.thresholds[key];
+    lines.push('');
     if (!win || typeof win.used_percentage !== 'number') {
       lines.push(`  ${meta.label}  no data yet  (stop at ${limit}%)`);
       continue;
     }
     const ceiling = config.ceilings[key];
+    const notice = config.notices[key];
     const over = typeof ceiling === 'number' && win.used_percentage >= ceiling;
     const flag = over ? '  <- at your ceiling' : win.used_percentage >= limit ? '  <- over your line' : '';
-    const at = localTime(win.resets_at);
-    const reset = at ? `, resets ${at} (in ${untilReset(win.resets_at)})` : '';
-    const cap = typeof ceiling === 'number' ? `, ceiling ${ceiling}%` : '';
-    const notice = config.notices[key];
-    const heads = typeof notice === 'number' ? `, notice at ${notice}%` : '';
-    lines.push(`  ${meta.label}  ${pct(win.used_percentage)} used, stop at ${limit}%${cap}${heads}${reset}${flag}`);
+
+    // The bar carries the two numbers that matter at a glance: how full the
+    // window is, and where in it the work stops. Everything else is words
+    // underneath, because words are what you read second.
+    lines.push(`  ${meta.label}  ${bar(win.used_percentage, limit, ceiling)}  ${pct(win.used_percentage)} used${flag}`);
+
+    const marks = [`stop at ${limit}%`];
+    if (typeof ceiling === 'number') marks.push(`ceiling ${ceiling}%`);
+    marks.push(typeof notice === 'number' ? `notice at ${notice}%` : 'no notice');
+    lines.push(`      ${marks.join(' \u00b7 ')}`);
 
     // The rate is only worth printing where it answers something: how long the
     // room between here and the ceiling actually lasts.
     const rate = burnRate(history, key, now);
+    const tail = [];
     if (rate) {
       const target = typeof ceiling === 'number' ? ceiling : 100;
       const minutes = minutesTo(win.used_percentage, target, rate);
       const eta = minutes === null ? '' : minutes === 0 ? ' — already there' : ` — ${target}% in about ${minutes}m`;
-      lines.push(`        climbing ${rate.toFixed(1)}%/min${eta}`);
+      tail.push(`climbing ${rate.toFixed(1)}%/min${eta}`);
     }
+    const at = localTime(win.resets_at);
+    if (at) tail.push(`resets ${at} (in ${untilReset(win.resets_at)})`);
+    if (tail.length) lines.push(`      ${tail.join(' \u00b7 ')}`);
   }
 
   if (!usage) {
@@ -139,7 +169,9 @@ function status() {
     lines.push(`Last reading is ${untilReset(now + (now - usage.ts))} old — the statusline may not be rendering.`);
   }
 
-  if (breach) {
+  // A pending heads-up is not a hold — it is a sentence waiting to be said, and
+  // reporting it here as one would claim a block that is not happening.
+  if (breach && breach.kind !== 'notice') {
     lines.push('');
     const what = breach.kind === 'ceiling' ? 'ceiling' : 'line';
     lines.push(`Currently holding: ${breach.label} at ${pct(breach.used_percentage)}, against your ${what} of ${breach.threshold}%.`);
