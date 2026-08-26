@@ -1246,6 +1246,40 @@ check('a statusline wrapper written before the move is repaired', () => {
   fs.rmSync(wrapper, { force: true });
 });
 
+// Claude Code runs the statusline command by path. writeFileSync applies its
+// `mode` only when it creates the file, so a wrapper that arrived without its
+// executable bit — copied between machines, restored from an archive, checked
+// out of a dotfiles repo — would keep losing it through every rewrite, and an
+// unrunnable statusline is no collector and so no gate at all.
+check('a rewritten wrapper gets its executable bit back', () => {
+  const wrapper = path.join(STATE, 'statusline-wrap.sh');
+  fs.writeFileSync(
+    wrapper,
+    ['#!/bin/sh',
+      'SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)',
+      '[ -f "$SINK" ] || SINK=/somewhere/else/sink.mjs',
+      'echo',
+      ''].join('\n'),
+  );
+  fs.chmodSync(wrapper, 0o644);
+  cli('status');
+  eq(fs.statSync(wrapper).mode & 0o111, 0o111, 'executable bits after the repair');
+  fs.rmSync(wrapper, { force: true });
+
+  // And the same on the path that writes a wrapper from scratch over one that
+  // is already there.
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  const saved = fs.existsSync(settingsFile) ? fs.readFileSync(settingsFile, 'utf8') : null;
+  fs.writeFileSync(wrapper, '#!/bin/sh\necho\n');
+  fs.chmodSync(wrapper, 0o644);
+  fs.writeFileSync(settingsFile, JSON.stringify({ model: 'opus' }, null, 2));
+  cli('install');
+  eq(fs.statSync(wrapper).mode & 0o111, 0o111, 'executable bits after install');
+  cli('uninstall');
+  if (saved === null) fs.rmSync(settingsFile, { force: true });
+  else fs.writeFileSync(settingsFile, saved);
+});
+
 // 0.1.1 wrote the lookup as the fallback half of a test rather than on a line
 // of its own, so a repair that spans two lines would leave the second one
 // running unconditionally and clear the pinned path it was meant to keep.

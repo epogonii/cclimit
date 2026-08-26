@@ -447,6 +447,20 @@ function writeSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
 }
 
+// writeFileSync applies `mode` only when it creates the file, so a wrapper that
+// arrived without its executable bit — copied between machines, restored from an
+// archive, checked out of a dotfiles repo — keeps losing it through every
+// rewrite. Claude Code runs the statusline command by path, and a command that
+// cannot be executed is no statusline, no collector, and so no gate at all.
+function writeExecutable(file, text) {
+  fs.writeFileSync(file, text, { mode: 0o755 });
+  try {
+    fs.chmodSync(file, 0o755);
+  } catch {
+    /* whoever owns the file kept it; a readable wrapper still beats no wrapper */
+  }
+}
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -480,7 +494,7 @@ function healWrapper() {
   }
   if (!text.includes(SINK_LOOKUP_BIN)) return;
   try {
-    fs.writeFileSync(WRAP_FILE, text.replace(SINK_LOOKUP_BIN, SINK_LOOKUP), { mode: 0o755 });
+    writeExecutable(WRAP_FILE, text.replace(SINK_LOOKUP_BIN, SINK_LOOKUP));
   } catch {
     // A statusline running the old collector is a much smaller problem than a
     // command that refuses to answer, so a wrapper that cannot be written is
@@ -541,7 +555,7 @@ function install() {
   // of it. It copies stdin through untouched, so the visible result is
   // identical to before.
   const downstream = existing?.type === 'command' && existing.command ? existing.command : null;
-  fs.writeFileSync(WRAP_FILE, wrapperScript(downstream), { mode: 0o755 });
+  writeExecutable(WRAP_FILE, wrapperScript(downstream));
   settings.statusLine = downstream
     ? { ...existing, command: WRAP_FILE }
     : { type: 'command', command: WRAP_FILE, padding: 0 };
