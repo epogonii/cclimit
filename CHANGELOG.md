@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.4
+
+- An interruption is audible. A stop, an `ask` and a `warn` on a tool call now
+  ring the terminal bell, because they land in the middle of a turn — which is
+  precisely when nobody is looking at the terminal. `/cclimit alert notify`
+  adds a desktop notification on terminals that have one, `/cclimit alert off`
+  goes back to silence. A blocked prompt stays silent either way: it arrives a
+  second after you pressed enter.
+- Dropped `suppressOutput` from the hook responses. It is documented as having
+  no effect, and carrying it implied a guarantee that was never there.
+
 ## 0.5.3
 
 - The message a stop prints is laid out to be read at a glance: the facts on
