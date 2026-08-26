@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import process from 'node:process';
-import { loadConfig, loadBreach, breachMessage } from './lib.mjs';
+import { loadConfig, loadBreach, loadHistory, burnRate, minutesTo, breachMessage } from './lib.mjs';
 
 function allow() {
   process.exit(0);
@@ -43,16 +43,30 @@ const config = loadConfig();
 if (!config.enabled) allow();
 
 const now = Math.floor(Date.now() / 1000);
-if (config.snoozeUntil && now < config.snoozeUntil) allow();
 
 const breach = loadBreach();
 if (!breach || typeof breach.used_percentage !== 'number') allow();
 
-// The breach file was written against whatever the thresholds were at the time.
+// The breach file was written against whatever the numbers were at the time.
 // Re-check against the config as it is now, so `/cclimit 5h 95` takes effect on
 // the next tool call rather than on the next statusline render.
-const threshold = config.thresholds?.[breach.window];
-if (typeof threshold !== 'number' || breach.used_percentage < threshold) allow();
+//
+// A ceiling is checked first and is not snoozeable: `/cclimit go` answers the
+// line, and the ceiling is precisely the number that answer does not reach.
+const ceiling = config.ceilings?.[breach.window];
+const line = config.thresholds?.[breach.window];
+const snoozed = Boolean(config.snoozeUntil) && now < config.snoozeUntil;
+
+let threshold = null;
+let kind = null;
+if (typeof ceiling === 'number' && breach.used_percentage >= ceiling) {
+  threshold = ceiling;
+  kind = 'ceiling';
+} else if (!snoozed && typeof line === 'number' && breach.used_percentage >= line) {
+  threshold = line;
+  kind = 'line';
+}
+if (!kind) allow();
 
 const age = now - (breach.ts ?? 0);
 if (age > (config.maxStaleSeconds ?? 120)) allow();
@@ -73,12 +87,22 @@ const tool = event === 'PreToolUse' ? payload.tool_name : null;
 // A subagent launch is not one tool call, it is a whole session's worth of
 // them, so it gets said out loud rather than folded into the generic line.
 const isFanOut = tool === 'Task' || tool === 'Agent';
-let message = breachMessage({ ...breach, threshold }, config, { tool });
+
+// Only worth computing while the offer to continue is still on the table.
+let headroom;
+if (kind === 'line' && typeof ceiling === 'number') {
+  const rate = burnRate(loadHistory(), breach.window, now);
+  headroom = { ceiling, minutes: minutesTo(breach.used_percentage, ceiling, rate) };
+}
+
+let message = breachMessage({ ...breach, threshold, kind }, config, { tool, headroom });
 if (isFanOut) {
   message += `\nThis call would start a subagent, which spends far more than a single tool call.`;
 }
 
-switch (config.action) {
+// A ceiling means stop, whatever the action says. An action is how you want to
+// be told about the line; the ceiling is not up for discussion.
+switch (kind === 'ceiling' ? 'stop' : config.action) {
   case 'warn':
     emit({ systemMessage: message, suppressOutput: true });
     break;

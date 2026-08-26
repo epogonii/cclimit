@@ -88,6 +88,7 @@ If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11
 | `/cclimit status` | where usage stands, what the lines are, whether anything is being held |
 | `/cclimit 5h 85` | stop at 85% of the 5-hour window |
 | `/cclimit 7d 90` | stop at 90% of the 7-day window |
+| `/cclimit ceiling 5h 99` | the number `/cclimit go` cannot lift — `off` removes it |
 | `/cclimit go` | continue until the current window resets |
 | `/cclimit action stop\|ask\|warn` | what a crossing does — see below |
 | `/cclimit on` / `/cclimit off` | reinstate / disable, without uninstalling anything |
@@ -106,6 +107,41 @@ nor reach the binary behind them. It cannot raise the line, snooze, or switch
 the plugin off. Deciding to spend past the line is the one thing this plugin
 exists to keep in your hands.
 
+## The ceiling
+
+One line gives you two answers and no third: stop, or `/cclimit go` — which
+lifts the line for the rest of the window. Answering "let me finish this" costs
+you every percent between here and 100.
+
+A ceiling is that third answer:
+
+```
+/cclimit 5h 85            the line: work stops here and asks
+/cclimit ceiling 5h 99    the ceiling: work stops here and does not ask
+```
+
+`go` still means carry on, and now it carries on to 99 rather than to the end of
+the plan. The ceiling is not snoozeable, not subject to `action`, and not
+reachable by the model — `warn` still stops at it, and `/cclimit go` says so
+rather than pretending otherwise. Removing it is `/cclimit ceiling 5h off`, and
+there is none until you set one.
+
+What this buys is unattended work. Without a ceiling a long task either waits
+for you at the line or, once you have said `go`, runs to the end of the plan
+while you are not watching. With one, you can leave.
+
+While a ceiling is set, the stop at the line says how much room is left:
+
+```
+cclimit: 5h usage hit 85% of your plan (your limit: 85%). Stopped before running Bash.
+Window resets Aug 26, 14:20 (in 42m). Your ceiling is 99%, about 14m away at the current rate.
+```
+
+That estimate is measured, not guessed: cclimit keeps the last few dozen
+readings and divides. No trail, a flat one, or a window that has just reset —
+the sentence simply ends after the ceiling. The model is never asked to predict
+anything, and could not act on it if it were.
+
 ## The three actions
 
 **`stop`** (default) — the turn halts outright and the reason is shown. One
@@ -121,6 +157,8 @@ the permission system, not a bug here — it is why `stop` is the default.
 
 **`warn`** — nothing is blocked. A line appears above the answer saying where
 usage stands. For people who want the heads-up and not the brakes.
+
+All three describe what happens at the *line*. A ceiling always stops.
 
 ## Where the line should sit
 
@@ -138,13 +176,15 @@ your line cost money, so set them lower than feels necessary.
   "enabled": true,
   "action": "stop",
   "thresholds": { "five_hour": 85, "seven_day": 90 },
+  "ceilings": { "five_hour": null, "seven_day": null },
   "snoozeUntil": null,
   "maxStaleSeconds": 120
 }
 ```
 
-Also in that directory: `limits.json` (the last reading), `breach.json` (present
-only while a line is being held), `statusline-wrap.sh` (written by `install`).
+Also in that directory: `limits.json` (the last reading), `history.json` (the
+trail behind it, for the climb rate), `breach.json` (present only while a line
+is being held), `statusline-wrap.sh` (written by `install`).
 Delete the directory to reset.
 
 ## How it fails

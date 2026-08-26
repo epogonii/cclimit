@@ -6,6 +6,7 @@
 //   cclimit status              what the limits are and where usage stands
 //   cclimit 5h 85               stop at 85% of the 5-hour window
 //   cclimit 7d 90               stop at 90% of the 7-day window
+//   cclimit ceiling 5h 99       the number /cclimit go cannot lift
 //   cclimit action stop|ask|warn
 //   cclimit go                  keep going until the window resets
 //   cclimit on | off
@@ -25,6 +26,9 @@ import {
   saveConfig,
   loadLimits,
   loadBreach,
+  loadHistory,
+  burnRate,
+  minutesTo,
   clearBreach,
   evaluate,
   pct,
@@ -64,6 +68,7 @@ function status() {
   const config = loadConfig();
   const usage = currentUsage();
   const breach = loadBreach();
+  const history = loadHistory();
 
   if (asJson) {
     out(JSON.stringify({ config, usage, breach }, null, 2));
@@ -85,10 +90,23 @@ function status() {
       lines.push(`  ${meta.label}  no data yet  (stop at ${limit}%)`);
       continue;
     }
-    const flag = win.used_percentage >= limit ? '  <- over your line' : '';
+    const ceiling = config.ceilings[key];
+    const over = typeof ceiling === 'number' && win.used_percentage >= ceiling;
+    const flag = over ? '  <- at your ceiling' : win.used_percentage >= limit ? '  <- over your line' : '';
     const at = localTime(win.resets_at);
     const reset = at ? `, resets ${at} (in ${untilReset(win.resets_at)})` : '';
-    lines.push(`  ${meta.label}  ${pct(win.used_percentage)} used, stop at ${limit}%${reset}${flag}`);
+    const cap = typeof ceiling === 'number' ? `, ceiling ${ceiling}%` : '';
+    lines.push(`  ${meta.label}  ${pct(win.used_percentage)} used, stop at ${limit}%${cap}${reset}${flag}`);
+
+    // The rate is only worth printing where it answers something: how long the
+    // room between here and the ceiling actually lasts.
+    const rate = burnRate(history, key, now);
+    if (rate) {
+      const target = typeof ceiling === 'number' ? ceiling : 100;
+      const minutes = minutesTo(win.used_percentage, target, rate);
+      const eta = minutes === null ? '' : minutes === 0 ? ' — already there' : ` — ${target}% in about ${minutes}m`;
+      lines.push(`        climbing ${rate.toFixed(1)}%/min${eta}`);
+    }
   }
 
   if (!usage) {
@@ -103,8 +121,13 @@ function status() {
 
   if (breach) {
     lines.push('');
-    lines.push(`Currently holding: ${breach.label} at ${pct(breach.used_percentage)} of ${breach.threshold}%.`);
-    lines.push('Run /cclimit go to continue until the window resets.');
+    const what = breach.kind === 'ceiling' ? 'ceiling' : 'line';
+    lines.push(`Currently holding: ${breach.label} at ${pct(breach.used_percentage)}, against your ${what} of ${breach.threshold}%.`);
+    lines.push(
+      breach.kind === 'ceiling'
+        ? `A ceiling is not snoozeable. Raise it with /cclimit ceiling ${breach.label} <percent> or remove it with /cclimit ceiling ${breach.label} off.`
+        : 'Run /cclimit go to continue until the window resets.'
+    );
   }
   out(lines.join('\n'));
 }
@@ -113,12 +136,57 @@ function setThreshold(key, valueRaw) {
   const value = Number(valueRaw);
   if (!Number.isFinite(value) || value <= 0 || value > 100) die(`Threshold must be a number between 1 and 100, got: ${valueRaw}`);
   const config = loadConfig();
+  const ceiling = config.ceilings[key];
+  // A line at or above the ceiling can never fire: the ceiling stops everything
+  // first. Silently keeping both would leave someone believing in a line that
+  // does nothing.
+  if (typeof ceiling === 'number' && value >= ceiling) {
+    die(
+      `cclimit: a line at ${value}% would never fire — your ${WINDOWS[key].label} ceiling is ${ceiling}% and stops first.\n` +
+        `Raise the ceiling (/cclimit ceiling ${WINDOWS[key].label} <percent>) or set a lower line.`
+    );
+  }
   config.thresholds[key] = value;
   // A new line the current usage clears makes the old snooze meaningless.
   config.snoozeUntil = null;
   saveConfig(config);
   refreshBreach(config);
-  out(`cclimit: ${WINDOWS[key].label} window now stops at ${value}%.`);
+  const guard = typeof ceiling === 'number' ? ` Ceiling stays at ${ceiling}%.` : '';
+  out(`cclimit: ${WINDOWS[key].label} window now stops at ${value}%.${guard}`);
+}
+
+// The ceiling is the number /cclimit go cannot lift, so it is also the only
+// number in here that is worth setting and then forgetting.
+function setCeiling(key, valueRaw) {
+  const config = loadConfig();
+  const token = String(valueRaw ?? '').toLowerCase();
+
+  if (['off', 'none', 'no', 'remove', '0'].includes(token)) {
+    config.ceilings[key] = null;
+    saveConfig(config);
+    refreshBreach(config);
+    out(`cclimit: ${WINDOWS[key].label} ceiling removed. /cclimit go now runs to 100% again.`);
+    return;
+  }
+
+  const value = Number(valueRaw);
+  if (!Number.isFinite(value) || value <= 0 || value > 100) {
+    die(`Ceiling must be a number between 1 and 100, or "off", got: ${valueRaw}`);
+  }
+  const line = config.thresholds[key];
+  if (typeof line === 'number' && value <= line) {
+    die(
+      `cclimit: a ceiling at ${value}% is at or below your ${WINDOWS[key].label} line of ${line}%, which leaves the line no room.\n` +
+        `Set the ceiling above the line, or lower the line first: /cclimit ${WINDOWS[key].label} <percent>`
+    );
+  }
+  config.ceilings[key] = value;
+  saveConfig(config);
+  refreshBreach(config);
+  out(
+    `cclimit: ${WINDOWS[key].label} ceiling set to ${value}%. Work continues past ${line}% once you say so, ` +
+      `and stops at ${value}% whatever you say.`
+  );
 }
 
 function setAction(value) {
@@ -162,9 +230,17 @@ function go() {
   config.snoozeUntil = until ?? now + 3600;
   saveConfig(config);
   clearBreach();
+  // What a snooze does not cover is the part worth repeating: someone reaching
+  // for `go` is reaching for "carry on", and needs to know where that ends.
+  const caps = Object.entries(WINDOWS)
+    .filter(([key]) => typeof config.ceilings[key] === 'number')
+    .map(([key, meta]) => `${meta.label} ${config.ceilings[key]}%`);
+  const guard = caps.length
+    ? ` Your ceiling still stands (${caps.join(', ')}) and this does not lift it.`
+    : ` Usage past your line from here on is on you.`;
   out(
-    `cclimit: standing down until ${localTime(config.snoozeUntil)} (${untilReset(config.snoozeUntil)}). ` +
-      `Usage past your line from here on is on you. /cclimit on to reinstate it sooner.`
+    `cclimit: standing down until ${localTime(config.snoozeUntil)} (${untilReset(config.snoozeUntil)}).` +
+      `${guard} /cclimit on to reinstate it sooner.`
   );
 }
 
@@ -301,9 +377,14 @@ else if (first === 'off') toggle(false);
 else if (first === 'install') install();
 else if (first === 'uninstall') uninstall();
 else if (first === 'action') setAction(String(second || '').toLowerCase());
+else if (first === 'ceiling' && windowKey(second)) setCeiling(windowKey(second), args[2]);
 else if (first === 'config') out(CONFIG_FILE);
 else if (windowKey(first) && second !== undefined) setThreshold(windowKey(first), second);
 else if (Number.isFinite(Number(first))) setThreshold('five_hour', first);
 // Every form listed here has to be one a user can actually type as a slash
 // command, so `<percent>` on its own is deliberately not among them.
-else die(`cclimit: don't know "${args.join(' ')}". Try: status | 5h <percent> | 7d <percent> | action stop|ask|warn | go | on | off | install | uninstall`);
+else
+  die(
+    `cclimit: don't know "${args.join(' ')}". Try: status | 5h <percent> | 7d <percent> | ` +
+      `ceiling 5h <percent>|off | action stop|ask|warn | go | on | off | install | uninstall`
+  );

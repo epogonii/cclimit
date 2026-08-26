@@ -346,6 +346,162 @@ check('status reports usage and the line it is holding', () => {
   if (!/85%/.test(text)) throw new Error(`no threshold in: ${text}`);
 });
 
+// --- the ceiling ------------------------------------------------------------
+//
+// The line is a question and the ceiling is not. Everything below is about that
+// difference: `go` answers the line, and the ceiling is the number that answer
+// does not reach.
+
+function ceilingOff() {
+  cli('ceiling', '5h', 'off');
+  cli('ceiling', '7d', 'off');
+  cli('on');
+  cli('action', 'stop');
+}
+
+check('no ceiling exists until one is set', () => {
+  ceilingOff();
+  const { config } = JSON.parse(cli('status', '--json'));
+  eq(config.ceilings, { five_hour: null, seven_day: null }, 'ceilings');
+});
+
+check('go lifts the line', () => {
+  ceilingOff();
+  feed(90, 10);
+  cli('go');
+  feed(95, 10);
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  cli('on');
+});
+
+check('go does not lift the ceiling', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  feed(90, 10);
+  cli('go');
+  feed(96, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(res.continue, false, 'continue');
+  if (!/ceiling/.test(res.stopReason)) throw new Error(`not reported as a ceiling: ${res.stopReason}`);
+  ceilingOff();
+});
+
+check('a ceiling stops even when the action is only to warn', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  cli('action', 'warn');
+  feed(96, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(res.continue, false, 'continue');
+  ceilingOff();
+});
+
+check('the ceiling message offers the ways out that exist', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  feed(96, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (!/\/cclimit ceiling 5h off/.test(res.stopReason)) throw new Error(`no way to remove it: ${res.stopReason}`);
+  // Offering `go` here would be offering something that does not work.
+  if (/Continue until the window resets/.test(res.stopReason)) throw new Error(`offers a snooze it will ignore: ${res.stopReason}`);
+  ceilingOff();
+});
+
+check('the ceiling outranks a line the other window is further past', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  feed(96, 99);
+  eq(breachFile().window, 'five_hour', 'window');
+  eq(breachFile().kind, 'ceiling', 'kind');
+  ceilingOff();
+});
+
+check('a ceiling at or below the line is refused', () => {
+  ceilingOff();
+  const res = run('cclimit.mjs', ['ceiling', '5h', '85']);
+  eq(res.status, 1, 'exit status');
+  if (!/leaves the line no room/.test(res.stderr)) throw new Error(`unhelpful refusal: ${res.stderr}`);
+});
+
+check('a line at or above the ceiling is refused', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  const res = run('cclimit.mjs', ['5h', '95']);
+  eq(res.status, 1, 'exit status');
+  if (!/never fire/.test(res.stderr)) throw new Error(`unhelpful refusal: ${res.stderr}`);
+  ceilingOff();
+});
+
+check('removing the ceiling gives go back the rest of the window', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  cli('ceiling', '5h', 'off');
+  feed(90, 10);
+  cli('go');
+  feed(99, 10);
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  cli('on');
+});
+
+// --- how fast it is climbing ------------------------------------------------
+
+function writeHistory(points) {
+  fs.writeFileSync(path.join(STATE, 'history.json'), JSON.stringify(points));
+}
+
+check('the collector keeps a trail of readings', () => {
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+  feed(20, 10);
+  feed(21, 10);
+  const history = JSON.parse(fs.readFileSync(path.join(STATE, 'history.json'), 'utf8'));
+  if (history.length < 2) throw new Error(`trail too short: ${JSON.stringify(history)}`);
+  eq(history[history.length - 1].five_hour, 21, 'last reading');
+});
+
+check('a line breach says how far the ceiling is at the current rate', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  // Ten minutes of readings climbing a point a minute: the ceiling is five
+  // points and therefore about five minutes away.
+  writeHistory(Array.from({ length: 11 }, (_, i) => ({ ts: NOW - (10 - i) * 60, five_hour: 80 + i, seven_day: 10 })));
+  feed(90, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (!/ceiling is 95%/.test(res.stopReason)) throw new Error(`ceiling not mentioned: ${res.stopReason}`);
+  if (!/about 5m away/.test(res.stopReason)) throw new Error(`no usable estimate: ${res.stopReason}`);
+  ceilingOff();
+});
+
+check('a trail too short or too flat produces no estimate at all', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  for (const trail of [
+    [],
+    [{ ts: NOW - 30, five_hour: 89 }, { ts: NOW, five_hour: 90 }],
+    [{ ts: NOW - 600, five_hour: 90 }, { ts: NOW, five_hour: 90 }],
+    [{ ts: NOW - 600, five_hour: 95 }, { ts: NOW, five_hour: 2 }],
+  ]) {
+    writeHistory(trail);
+    feed(90, 10);
+    const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+    if (/away at the current rate/.test(res.stopReason)) throw new Error(`invented an estimate from ${JSON.stringify(trail)}`);
+    if (!/ceiling is 95%/.test(res.stopReason)) throw new Error(`lost the ceiling: ${res.stopReason}`);
+  }
+  ceilingOff();
+});
+
+check('status shows the ceiling and the climb', () => {
+  ceilingOff();
+  cli('ceiling', '5h', '95');
+  writeHistory(Array.from({ length: 11 }, (_, i) => ({ ts: NOW - (10 - i) * 60, five_hour: 80 + i, seven_day: 10 })));
+  feed(90, 10);
+  const text = cli('status');
+  if (!/ceiling 95%/.test(text)) throw new Error(`no ceiling in status: ${text}`);
+  if (!/climbing 1\.0%\/min/.test(text)) throw new Error(`no rate in status: ${text}`);
+  if (!/95% in about 5m/.test(text)) throw new Error(`no estimate in status: ${text}`);
+  ceilingOff();
+  fs.rmSync(path.join(STATE, 'history.json'), { force: true });
+});
+
 // --- wiring the collector in ------------------------------------------------
 
 check('install pipes the collector in front of an existing statusline', () => {

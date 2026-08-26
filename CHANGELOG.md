@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0
+
+- Ceilings. `/cclimit ceiling 5h 99` sets a second, harder number: the line asks
+  and can be answered with `/cclimit go`, the ceiling stops and cannot. It
+  ignores the snooze, ignores `action` (a `warn` still stops at it), and is as
+  far out of the model's reach as everything else here. There is none until you
+  set one, so nothing changes for anyone who does not.
+- The reason this exists: with one line, "let me finish this" cost the whole
+  rest of the window, which made unattended work a choice between a task that
+  waits for you and a task that runs to 100%.
+- A line crossed while a ceiling is set says how much room is left and, when the
+  readings support it, how many minutes that is. The rate is measured from the
+  trail of readings in `history.json`; a trail too short, too flat, or crossing
+  a window reset produces no estimate rather than a bad one.
+- `/cclimit status` shows the ceiling and the climb.
+- A line at or above the ceiling, or a ceiling at or below the line, is refused
+  with the command that fixes it — the pair only means something in order.
+
 ## 0.1.3
 
 - The stop message says that the turn is over rather than paused. `/cclimit go`

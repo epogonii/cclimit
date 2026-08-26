@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import process from 'node:process';
-import { STATE_DIR, LIMITS_FILE, loadConfig, evaluate, writeBreach, clearBreach, pct, WINDOWS } from './lib.mjs';
+import { STATE_DIR, LIMITS_FILE, loadConfig, evaluate, writeBreach, clearBreach, recordHistory, pct, WINDOWS } from './lib.mjs';
 
 const render = process.argv.includes('--render');
 
@@ -56,6 +56,9 @@ try {
   if (rateLimits) {
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.writeFileSync(LIMITS_FILE, JSON.stringify({ rate_limits: rateLimits, ts: Math.floor(Date.now() / 1000) }) + '\n');
+    // The trail behind the last reading is what turns "you are at 90%" into
+    // "the ceiling is twenty minutes away".
+    recordHistory(rateLimits);
   }
 
   // The breach file is the gates' fast path: its mere existence is the signal,
