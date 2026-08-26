@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.1
+
+- A reading from a session that has been sitting idle no longer overwrites the
+  live one. Every open session renders its own statusline and they all write to
+  the same state, so an idle window rendering usage from hours ago was taking
+  the gates down with it: the stored number would fall back under the line and
+  everything held would be let through. Usage inside a window only climbs and
+  only a real reset moves the reset time, so a reading that comes back lower in
+  the same window, or that carries a reset time already passed, is dropped. Each
+  window is judged on its own.
+- The sparkline is drawn from the moments the number moved rather than from the
+  buckets it happened to land in. Percentages arrive as whole numbers, so steady
+  work is a staircase — nothing, nothing, a step — and charting it as it arrived
+  drew a comb of spikes with gaps between them, which said the work came in
+  bursts it did not come in. The stretch in front of the first step is left out,
+  since whatever earned it was partly spent before the trail began, and an even
+  burn is drawn as the level line it is instead of scaling up into a wall.
+
 ## 0.5.0
 
 - The window announces its own reset. Whatever stopped you turns over on its
