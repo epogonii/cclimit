@@ -154,15 +154,24 @@ export function localTime(resetsAt) {
 
 // The sentence every gate shows. One line of fact, one line of what to do.
 export function breachMessage(breach, config, { tool } = {}) {
-  const where = tool ? `before running ${tool}` : 'before this turn';
   const at = localTime(breach.resets_at);
   const reset = at ? ` Window resets ${at} (in ${untilReset(breach.resets_at)}).` : '';
-  const verb = config.action === 'warn' ? 'is past' : 'hit';
+
+  // Under `warn` nothing was stopped, so saying so would be a plain lie.
+  const warning = config.action === 'warn';
+  const verb = warning ? 'is past' : 'hit';
+  const where = warning ? '' : ` Stopped ${tool ? `before running ${tool}` : 'before this turn'}.`;
+
+  // Stopping ends the turn outright and nothing can revive it afterwards —
+  // /cclimit go lifts the line for the next turn, it does not resume this one.
+  // Left unsaid, it reads as a resume and the work looks lost.
+  const again = config.action === 'stop' ? `\nThe turn ends here either way: ask for the work again afterwards.` : '';
+
   return (
     `cclimit: ${breach.label} usage ${verb} ${pct(breach.used_percentage)} of your plan ` +
-    `(your limit: ${breach.threshold}%). Stopped ${where}.${reset}\n` +
+    `(your limit: ${breach.threshold}%).${where}${reset}\n` +
     `Continue until the window resets: /cclimit go — ` +
     `raise the line: /cclimit ${breach.label} ${Math.min(100, Math.ceil(breach.used_percentage) + 5)} — ` +
-    `turn it off: /cclimit off`
+    `turn it off: /cclimit off${again}`
   );
 }

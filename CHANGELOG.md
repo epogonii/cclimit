@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- The stop message says that the turn is over rather than paused. `/cclimit go`
+  lifts the line for what comes next; it cannot resume the turn it interrupted,
+  and reading it as a resume is how the interrupted work looks lost.
+- Under `warn`, the message no longer says it stopped something. It did not.
+
 ## 0.1.2
 
 - The statusline wrapper now runs the most recently installed collector and

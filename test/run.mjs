@@ -174,6 +174,21 @@ check('stop blocks a prompt before the turn starts', () => {
   eq(res.hookSpecificOutput.suppressOriginalPrompt, true, 'suppressOriginalPrompt');
 });
 
+// /cclimit go lifts the line for the next turn; it cannot revive this one.
+check('stop says the turn will not come back on its own', () => {
+  feed(90, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (!/ask for the work again/.test(res.stopReason)) throw new Error(`no warning that the turn is gone: ${res.stopReason}`);
+});
+
+check('warn does not claim to have stopped anything', () => {
+  feed(90, 10);
+  cli('action', 'warn');
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (/Stopped|ask for the work again/.test(res.systemMessage)) throw new Error(`warn message overstates itself: ${res.systemMessage}`);
+  cli('action', 'stop');
+});
+
 check('a subagent launch says what it would have cost', () => {
   feed(90, 10);
   const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'go' } });
