@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.8
+
+- A blocked prompt sends `suppressOriginalPrompt` under `hookSpecificOutput`
+  and nowhere else, undoing half of the change 0.5.7 made. The hooks reference
+  lists the field beside `decision` and `reason`, which are top-level, so 0.5.7
+  sent a copy to both places on the theory that an unread field is free. It is
+  not: the top-level response schema enumerates the fields it accepts and this
+  is not among them, and the code that acts on the flag reads only the nested
+  copy. The copy bought nothing where the parser is lenient and would have cost
+  the entire response — turning the block back into an echoed prompt — where it
+  is not.
+
 ## 0.5.7
 
 - `/cclimit go` no longer stands down until a moment that has already passed. A
