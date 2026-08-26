@@ -1005,6 +1005,36 @@ check('the gate hands over to a newer copy left under the old bin/ layout', () =
   unplant();
 });
 
+// An installed wrapper is a file and does not change when the plugin does, so
+// the one thing in it that went stale with the move is repaired in place.
+
+check('a statusline wrapper written before the move is repaired', () => {
+  const wrapper = path.join(STATE, 'statusline-wrap.sh');
+  fs.writeFileSync(
+    wrapper,
+    ['#!/bin/sh',
+      'SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)',
+      '[ -f "$SINK" ] || SINK=/somewhere/else/sink.mjs',
+      'if [ -f "$SINK" ]; then',
+      '  node "$SINK" | my-statusline --fancy',
+      'else',
+      '  cat | my-statusline --fancy',
+      'fi',
+      ''].join('\n'),
+    { mode: 0o755 },
+  );
+  cli('status');
+  const text = fs.readFileSync(wrapper, 'utf8');
+  if (!text.includes('/cclimit/*/scripts/sink.mjs')) throw new Error(`lookup not repaired: ${text}`);
+  if (!text.includes('/cclimit/*/bin/sink.mjs')) throw new Error(`old installs no longer found: ${text}`);
+  if (!text.includes('my-statusline --fancy')) throw new Error(`statusline command lost: ${text}`);
+  if (!text.includes('/somewhere/else/sink.mjs')) throw new Error(`fallback path lost: ${text}`);
+  const again = fs.readFileSync(wrapper, 'utf8');
+  cli('status');
+  eq(fs.readFileSync(wrapper, 'utf8'), again, 'a repaired wrapper is left alone');
+  fs.rmSync(wrapper, { force: true });
+});
+
 // --- where the window is heading -------------------------------------------
 
 check('status projects where the window lands at the current rate', () => {

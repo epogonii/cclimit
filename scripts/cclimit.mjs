@@ -425,6 +425,41 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
+// The two lines of the wrapper that find the collector. Kept apart from the
+// rest of it because a wrapper already on disk has to be repaired to them, and
+// a copy of them that drifts would repair it to the wrong thing.
+const SINK_LOOKUP = [
+  'CACHE="$HOME/.claude/plugins/cache"',
+  'SINK=$(ls -1dt "$CACHE"/*/cclimit/*/scripts/sink.mjs "$CACHE"/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)',
+].join('\n');
+
+// What 0.5.1 and earlier wrote there, when the executables lived in bin/.
+const SINK_LOOKUP_BIN =
+  'SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)';
+
+// An installed wrapper is a file, not code, so it does not change when the
+// plugin updates: one written before the move goes on finding the collector
+// under bin/, and an old version left in the cache is exactly where it finds
+// one. Nothing breaks loudly — the collector simply stays the old collector
+// for good. Only the lookup is rewritten, so whatever statusline command the
+// user had wrapped around it is left as it is.
+function healWrapper() {
+  let text;
+  try {
+    text = fs.readFileSync(WRAP_FILE, 'utf8');
+  } catch {
+    return;
+  }
+  if (!text.includes(SINK_LOOKUP_BIN)) return;
+  try {
+    fs.writeFileSync(WRAP_FILE, text.replace(SINK_LOOKUP_BIN, SINK_LOOKUP), { mode: 0o755 });
+  } catch {
+    // A statusline running the old collector is a much smaller problem than a
+    // command that refuses to answer, so a wrapper that cannot be written is
+    // left alone.
+  }
+}
+
 // The wrapper cannot hard-code the path to the collector: installing a plugin
 // puts it in a directory named after its version, so `claude plugin update`
 // both moves the collector out from under a path recorded today and leaves the
@@ -446,8 +481,7 @@ function wrapperScript(downstream) {
 # a plugin is installed into a directory of its own: the newest one is the one
 # to run, and the path below is only for a copy kept outside the plugin cache.
 # If neither can be found, the statusline runs without the collector.
-CACHE="$HOME/.claude/plugins/cache"
-SINK=$(ls -1dt "$CACHE"/*/cclimit/*/scripts/sink.mjs "$CACHE"/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)
+${SINK_LOOKUP}
 [ -f "$SINK" ] || SINK=${shellQuote(SINK)}
 if [ -f "$SINK" ]; then
   ${collector}
@@ -578,6 +612,8 @@ function configTable() {
   lines.push(`  Written to ${CONFIG_FILE}`);
   out(lines.join('\n'));
 }
+
+healWrapper();
 
 const [first, second] = args;
 
