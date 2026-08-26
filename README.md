@@ -328,6 +328,12 @@ ever held.
   like `56.00000000000001`. Comparison is `>=`, so a line at 85 fires at exactly
   85.0.
 - **`ask` re-asks per tool call.** See above.
+- **Downgrading rewrites a tool call's input**, which needs a Claude Code new
+  enough to take a `model` on a subagent launch. If a launch starts erroring
+  once downgrading is on, `/cclimit downgrade off` puts it back. Everything
+  else here works the same on any version.
+- **The session's own model is yours to change.** Nothing in the hook interface
+  can move it, so downgrading covers subagents and tells you about the rest.
 - **The window state is account-wide**, so a line crossed in one session holds in
   every session on that machine. That is the correct behaviour — the usage is
   shared — but it can be surprising the first time.
