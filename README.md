@@ -30,6 +30,10 @@
   <a href="#config">Config</a>
 </p>
 
+<p align="center">
+  <img width="760" alt="Pixel-art loop of the same hour twice. Without cclimit, you leave the desk and come back to 100% and $10.80 of extra usage. With a line set, the run stops at 85% and waits for you." src="docs/demo.gif">
+</p>
+
 ---
 
 ## The problem
