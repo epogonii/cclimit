@@ -63,10 +63,17 @@ function alerted(response, what) {
 
 // Blocking a prompt otherwise echoes the prompt back under the reason, which
 // buries the one line the user needs to read.
+//
+// The flag is sent in both places it could be read. The hooks reference lists
+// it in the same table as `decision` and `reason`, which are top-level fields,
+// while the example beside that table nests its own fields under
+// hookSpecificOutput. Sending one and guessing wrong costs the whole point of
+// the field; sending both costs a few bytes, and an unread field is ignored.
 function blockPrompt(reason) {
   emit({
     decision: 'block',
     reason,
+    suppressOriginalPrompt: true,
     hookSpecificOutput: { hookEventName: 'UserPromptSubmit', suppressOriginalPrompt: true },
   });
 }

@@ -239,8 +239,12 @@ check('stop blocks a prompt before the turn starts', () => {
   feed(90, 10);
   const res = gate('UserPromptSubmit', { prompt: 'keep going' });
   eq(res.decision, 'block', 'decision');
-  // Without this the prompt is echoed back under the reason and buries it.
-  eq(res.hookSpecificOutput.suppressOriginalPrompt, true, 'suppressOriginalPrompt');
+  // Without this the prompt is echoed back under the reason and buries it. The
+  // hooks reference lists the flag beside `decision` and `reason`, which are
+  // top-level, and shows sibling fields nested; it goes in both places rather
+  // than in the one that turns out to be wrong.
+  eq(res.hookSpecificOutput.suppressOriginalPrompt, true, 'suppressOriginalPrompt under hookSpecificOutput');
+  eq(res.suppressOriginalPrompt, true, 'suppressOriginalPrompt at the top level');
 });
 
 // /cclimit go lifts the line for the next turn; it cannot revive this one.
