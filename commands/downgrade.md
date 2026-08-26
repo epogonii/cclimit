@@ -1,5 +1,5 @@
 ---
-description: Past the line, run subagents on a cheaper model instead of stopping
+description: Run subagents on a cheaper model instead of stopping
 argument-hint: "<sonnet|haiku|off>"
 allowed-tools: Bash(node:*)
 disable-model-invocation: true

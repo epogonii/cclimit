@@ -1,5 +1,5 @@
 ---
-description: Show or change the plan-usage limit where Claude Code stops and asks
+description: Show or change where plan usage stops Claude Code
 argument-hint: "[<percent> | 5h <percent> | 7d <percent> | action stop|ask|warn | downgrade sonnet|haiku|off | config | go | on | off | install | uninstall]"
 allowed-tools: Bash(node:*)
 disable-model-invocation: true
