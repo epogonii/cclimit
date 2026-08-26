@@ -428,10 +428,12 @@ function shellQuote(value) {
 // The two lines of the wrapper that find the collector. Kept apart from the
 // rest of it because a wrapper already on disk has to be repaired to them, and
 // a copy of them that drifts would repair it to the wrong thing.
-const SINK_LOOKUP = [
-  'CACHE="$HOME/.claude/plugins/cache"',
-  'SINK=$(ls -1dt "$CACHE"/*/cclimit/*/scripts/sink.mjs "$CACHE"/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)',
-].join('\n');
+// One line, and no helper variable, because this same string is spliced into
+// wrappers written by earlier versions and they did not all put the lookup in
+// the same place: 0.1.1 wrote it as the fallback half of `[ -f "$SINK" ] || …`,
+// where a second line would land outside the test and run unconditionally.
+const SINK_LOOKUP =
+  'SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/scripts/sink.mjs "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)';
 
 // What 0.5.1 and earlier wrote there, when the executables lived in bin/.
 const SINK_LOOKUP_BIN =

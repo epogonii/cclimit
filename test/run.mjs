@@ -1035,6 +1035,41 @@ check('a statusline wrapper written before the move is repaired', () => {
   fs.rmSync(wrapper, { force: true });
 });
 
+// 0.1.1 wrote the lookup as the fallback half of a test rather than on a line
+// of its own, so a repair that spans two lines would leave the second one
+// running unconditionally and clear the pinned path it was meant to keep.
+check('a wrapper from before the lookup moved onto its own line still works', () => {
+  const wrapper = path.join(STATE, 'statusline-wrap.sh');
+  fs.writeFileSync(
+    wrapper,
+    ['#!/bin/sh',
+      "SINK='/somewhere/else/sink.mjs'",
+      '[ -f "$SINK" ] || SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)',
+      'if [ -f "$SINK" ]; then',
+      '  node "$SINK" | my-statusline --fancy',
+      'else',
+      '  cat | my-statusline --fancy',
+      'fi',
+      ''].join('\n'),
+    { mode: 0o755 },
+  );
+  cli('status');
+  const text = fs.readFileSync(wrapper, 'utf8');
+  if (!text.includes('/cclimit/*/scripts/sink.mjs')) throw new Error(`lookup not repaired: ${text}`);
+  if (!/\[ -f "\$SINK" \] \|\| SINK=\$\(ls/.test(text)) throw new Error(`the test no longer guards the lookup: ${text}`);
+  eq(spawnSync('sh', ['-n', wrapper]).status, 0, 'the repaired wrapper is valid shell');
+  // The pinned path still wins when it is there, which is the whole point of
+  // the shape this version wrote: run the two lookup lines and see what they
+  // settle on.
+  const pinned = path.join(STATE, 'pinned-sink.mjs');
+  fs.writeFileSync(pinned, '');
+  const lookup = text.split('\n').slice(1, 3).join('\n').replace('/somewhere/else/sink.mjs', pinned);
+  const ran = spawnSync('sh', ['-c', `${lookup}\nprintf %s "$SINK"`]);
+  eq(String(ran.stdout), pinned, 'the pinned collector still wins over the lookup');
+  fs.rmSync(pinned, { force: true });
+  fs.rmSync(wrapper, { force: true });
+});
+
 // --- where the window is heading -------------------------------------------
 
 check('status projects where the window lands at the current rate', () => {
