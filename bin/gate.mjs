@@ -8,7 +8,17 @@
 
 import fs from 'node:fs';
 import process from 'node:process';
-import { loadConfig, loadBreach, loadHistory, burnRate, minutesTo, breachMessage } from './lib.mjs';
+import {
+  loadConfig,
+  loadBreach,
+  clearBreach,
+  loadHistory,
+  markNoticed,
+  burnRate,
+  minutesTo,
+  breachMessage,
+  noticeMessage,
+} from './lib.mjs';
 
 function allow() {
   process.exit(0);
@@ -47,6 +57,11 @@ const now = Math.floor(Date.now() / 1000);
 const breach = loadBreach();
 if (!breach || typeof breach.used_percentage !== 'number') allow();
 
+// A reading old enough to be untrustworthy is not worth acting on, whichever
+// kind of thing it turned out to be.
+const age = now - (breach.ts ?? 0);
+if (age > (config.maxStaleSeconds ?? 120)) allow();
+
 // The breach file was written against whatever the numbers were at the time.
 // Re-check against the config as it is now, so `/cclimit 5h 95` takes effect on
 // the next tool call rather than on the next statusline render.
@@ -56,6 +71,30 @@ if (!breach || typeof breach.used_percentage !== 'number') allow();
 const ceiling = config.ceilings?.[breach.window];
 const line = config.thresholds?.[breach.window];
 const snoozed = Boolean(config.snoozeUntil) && now < config.snoozeUntil;
+
+// The heads-up is not a decision, so it is settled here and the file is cleared
+// on the way out. Recording it before it is printed is deliberate: a notice
+// shown twice is worse than one missed, and this is the only line of code that
+// knows the sentence actually reached the user.
+if (breach.kind === 'notice') {
+  const notice = config.notices?.[breach.window];
+  if (snoozed) allow();
+  if (typeof notice !== 'number' || breach.used_percentage < notice) allow();
+  if (typeof line === 'number' && breach.used_percentage >= line) allow();
+
+  markNoticed(breach.window, breach.resets_at);
+  clearBreach();
+
+  const target = typeof line === 'number' ? line : typeof ceiling === 'number' ? ceiling : null;
+  const rate = burnRate(loadHistory(), breach.window, now);
+  emit({
+    systemMessage: noticeMessage(breach, {
+      target,
+      minutes: target === null ? null : minutesTo(breach.used_percentage, target, rate),
+    }),
+    suppressOutput: true,
+  });
+}
 
 let threshold = null;
 let kind = null;
@@ -67,9 +106,6 @@ if (typeof ceiling === 'number' && breach.used_percentage >= ceiling) {
   kind = 'line';
 }
 if (!kind) allow();
-
-const age = now - (breach.ts ?? 0);
-if (age > (config.maxStaleSeconds ?? 120)) allow();
 
 // Never stand in the way of the commands that turn this off — blocking those
 // would leave the user with no way out but editing JSON by hand. The slash

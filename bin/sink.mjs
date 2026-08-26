@@ -13,7 +13,18 @@
 
 import fs from 'node:fs';
 import process from 'node:process';
-import { STATE_DIR, LIMITS_FILE, loadConfig, evaluate, writeBreach, clearBreach, recordHistory, pct, WINDOWS } from './lib.mjs';
+import {
+  STATE_DIR,
+  LIMITS_FILE,
+  loadConfig,
+  evaluate,
+  pendingNotice,
+  writeBreach,
+  clearBreach,
+  recordHistory,
+  pct,
+  WINDOWS,
+} from './lib.mjs';
 
 const render = process.argv.includes('--render');
 
@@ -63,8 +74,16 @@ try {
 
   // The breach file is the gates' fast path: its mere existence is the signal,
   // so the per-tool-call hook is three lines of shell and never starts Node.
+  // A pending heads-up rides in the same file, because that file's existence is
+  // the only thing that wakes the gate. It is written until the gate has said
+  // it once, and not after, so the hot path goes cold again straight away
+  // rather than starting Node on every call between here and the line.
   if (breach) writeBreach(breach);
-  else clearBreach();
+  else {
+    const notice = pendingNotice(rateLimits, config);
+    if (notice) writeBreach(notice);
+    else clearBreach();
+  }
 
   if (render) process.stdout.write(indicator(rateLimits, breach) + '\n');
 } catch {

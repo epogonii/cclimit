@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0
+
+- Notices. `/cclimit notice 5h 75` says something at 75% while the line still
+  stops at 80%, so the stop is not the first news that usage was climbing. It
+  blocks nothing, decides nothing, and is off until you set one.
+- Said once per window, recorded against that window's reset time: the next
+  window says it again, the current one does not repeat it at every tool call,
+  and a `/cclimit go` keeps it quiet because the point has already been taken.
+- A notice at or above the line is refused, and so is a line at or below a
+  notice — a heads-up that arrives with the stop is not a heads-up.
+- The message carries the same measured climb rate the ceiling uses, so it says
+  how many minutes the room is worth rather than only how many percent.
+- The hot path is unchanged in the common case. The pending notice travels in
+  the breach file because that file's existence is what wakes the gate at all,
+  and the gate clears it the moment the sentence has been delivered.
+
 ## 0.3.0
 
 - An update now takes effect in the session that is already running. Claude Code

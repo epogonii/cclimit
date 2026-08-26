@@ -7,6 +7,7 @@
 //   cclimit 5h 85               stop at 85% of the 5-hour window
 //   cclimit 7d 90               stop at 90% of the 7-day window
 //   cclimit ceiling 5h 99       the number /cclimit go cannot lift
+//   cclimit notice 5h 75        a heads-up before the line, said once per window
 //   cclimit action stop|ask|warn
 //   cclimit go                  keep going until the window resets
 //   cclimit on | off
@@ -36,6 +37,7 @@ import {
   untilReset,
   localTime,
   newerSelf,
+  rearmNotice,
 } from './lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -112,7 +114,9 @@ function status() {
     const at = localTime(win.resets_at);
     const reset = at ? `, resets ${at} (in ${untilReset(win.resets_at)})` : '';
     const cap = typeof ceiling === 'number' ? `, ceiling ${ceiling}%` : '';
-    lines.push(`  ${meta.label}  ${pct(win.used_percentage)} used, stop at ${limit}%${cap}${reset}${flag}`);
+    const notice = config.notices[key];
+    const heads = typeof notice === 'number' ? `, notice at ${notice}%` : '';
+    lines.push(`  ${meta.label}  ${pct(win.used_percentage)} used, stop at ${limit}%${cap}${heads}${reset}${flag}`);
 
     // The rate is only worth printing where it answers something: how long the
     // room between here and the ceiling actually lasts.
@@ -162,6 +166,16 @@ function setThreshold(key, valueRaw) {
         `Raise the ceiling (/cclimit ceiling ${WINDOWS[key].label} <percent>) or set a lower line.`
     );
   }
+  const notice = config.notices[key];
+  // A heads-up at or above the line arrives with the stop, or after it, which
+  // is exactly the thing it exists to avoid.
+  if (typeof notice === 'number' && value <= notice) {
+    die(
+      `cclimit: a line at ${value}% is at or below your ${WINDOWS[key].label} notice of ${notice}%, ` +
+        `so the heads-up would arrive with the stop.\n` +
+        `Move the notice down (/cclimit notice ${WINDOWS[key].label} <percent>) or set a higher line.`
+    );
+  }
   config.thresholds[key] = value;
   // A new line the current usage clears makes the old snooze meaningless.
   config.snoozeUntil = null;
@@ -202,6 +216,46 @@ function setCeiling(key, valueRaw) {
   out(
     `cclimit: ${WINDOWS[key].label} ceiling set to ${value}%. Work continues past ${line}% once you say so, ` +
       `and stops at ${value}% whatever you say.`
+  );
+}
+
+// The heads-up. Unlike the line and the ceiling this decides nothing — it is
+// the one number here whose whole job is to be said out loud and then get out
+// of the way.
+function setNotice(key, valueRaw) {
+  const config = loadConfig();
+  const token = String(valueRaw ?? '').toLowerCase();
+
+  if (['off', 'none', 'no', 'remove', '0'].includes(token)) {
+    config.notices[key] = null;
+    saveConfig(config);
+    rearmNotice(key);
+    refreshBreach(config);
+    out(`cclimit: ${WINDOWS[key].label} notice removed. The line is the first you will hear of it again.`);
+    return;
+  }
+
+  const value = Number(valueRaw);
+  if (!Number.isFinite(value) || value <= 0 || value > 100) {
+    die(`Notice must be a number between 1 and 100, or "off", got: ${valueRaw}`);
+  }
+  const line = config.thresholds[key];
+  if (typeof line === 'number' && value >= line) {
+    die(
+      `cclimit: a notice at ${value}% is at or above your ${WINDOWS[key].label} line of ${line}%, ` +
+        `so it would arrive with the stop rather than before it.\n` +
+        `Set it below the line, or raise the line first: /cclimit ${WINDOWS[key].label} <percent>`
+    );
+  }
+  config.notices[key] = value;
+  saveConfig(config);
+  // Moving the number is a new question, so the old answer stops counting and
+  // the current window gets to say it again.
+  rearmNotice(key);
+  refreshBreach(config);
+  out(
+    `cclimit: ${WINDOWS[key].label} notice set to ${value}%. You will hear about it once per window, ` +
+      `nothing will be blocked, and work still stops at ${line}%.`
   );
 }
 
@@ -394,6 +448,7 @@ else if (first === 'install') install();
 else if (first === 'uninstall') uninstall();
 else if (first === 'action') setAction(String(second || '').toLowerCase());
 else if (first === 'ceiling' && windowKey(second)) setCeiling(windowKey(second), args[2]);
+else if (first === 'notice' && windowKey(second)) setNotice(windowKey(second), args[2]);
 else if (first === 'config') out(CONFIG_FILE);
 else if (windowKey(first) && second !== undefined) setThreshold(windowKey(first), second);
 else if (Number.isFinite(Number(first))) setThreshold('five_hour', first);
@@ -402,5 +457,5 @@ else if (Number.isFinite(Number(first))) setThreshold('five_hour', first);
 else
   die(
     `cclimit: don't know "${args.join(' ')}". Try: status | 5h <percent> | 7d <percent> | ` +
-      `ceiling 5h <percent>|off | action stop|ask|warn | go | on | off | install | uninstall`
+      `ceiling 5h <percent>|off | notice 5h <percent>|off | action stop|ask|warn | go | on | off | install | uninstall`
   );

@@ -443,6 +443,134 @@ check('removing the ceiling gives go back the rest of the window', () => {
   cli('on');
 });
 
+// --- the heads-up -----------------------------------------------------------
+
+function noticeFile() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(STATE, 'notice.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function resetNotices() {
+  fs.rmSync(path.join(STATE, 'notice.json'), { force: true });
+  cli('5h', '80');
+  cli('notice', '5h', 'off');
+  cli('7d', '90');
+  cli('notice', '7d', 'off');
+  cli('on');
+}
+
+check('no notice is set by default', () => {
+  resetNotices();
+  const config = JSON.parse(cli('status', '--json')).config;
+  eq(config.notices, { five_hour: null, seven_day: null }, 'notices');
+});
+
+check('nothing is said below the notice', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(70, 10);
+  eq(breachFile(), null, 'breach file');
+});
+
+check('crossing the notice wakes the gate without blocking anything', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(76, 10);
+  eq(breachFile().kind, 'notice', 'kind');
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (res.continue === false) throw new Error('a notice blocked a tool call');
+  if (res.hookSpecificOutput) throw new Error('a notice made a permission decision');
+  if (!/76%/.test(res.systemMessage)) throw new Error(`no usage in the message: ${res.systemMessage}`);
+  if (!/stops at 80%/.test(res.systemMessage)) throw new Error(`no line in the message: ${res.systemMessage}`);
+});
+
+check('the notice is said once and then gets out of the way', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(76, 10);
+  gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(breachFile(), null, 'breach file after the notice');
+  eq(noticeFile().five_hour, NOW + 3600, 'recorded against the reset time');
+  // The next render must not put it back: the hot path has to go cold again,
+  // or every tool call between here and the line starts Node for nothing.
+  feed(77, 10);
+  eq(breachFile(), null, 'breach file after another render');
+});
+
+check('a notice above a prompt says something and eats nothing', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(76, 10);
+  const res = gate('UserPromptSubmit', { prompt: 'carry on with the refactor' });
+  if (res.decision) throw new Error(`a notice blocked a prompt: ${JSON.stringify(res)}`);
+  if (!/76%/.test(res.systemMessage)) throw new Error(`no usage in the message: ${res.systemMessage}`);
+  eq(breachFile(), null, 'breach file');
+});
+
+check('a new window says it again', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(76, 10);
+  gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  fs.writeFileSync(path.join(STATE, 'notice.json'), JSON.stringify({ five_hour: NOW - 99999 }));
+  feed(76, 10);
+  eq(breachFile().kind, 'notice', 'kind');
+});
+
+check('moving the notice re-arms it', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(76, 10);
+  gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  cli('notice', '5h', '70');
+  feed(76, 10);
+  eq(breachFile().kind, 'notice', 'kind');
+});
+
+check('past the line the line does the talking', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(90, 10);
+  eq(breachFile().kind, 'line', 'kind');
+});
+
+check('a snoozed session is not told again', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  cli('go');
+  feed(76, 10);
+  eq(breachFile(), null, 'breach file');
+  cli('on');
+});
+
+check('a notice at or above the line is refused', () => {
+  resetNotices();
+  const res = run('cclimit.mjs', ['notice', '5h', '80']);
+  if (res.status === 0) throw new Error('accepted a notice on top of the line');
+  if (!/below the line/.test(res.stderr)) throw new Error(`unhelpful refusal: ${res.stderr}`);
+});
+
+check('a line at or below the notice is refused', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  const res = run('cclimit.mjs', ['5h', '75']);
+  if (res.status === 0) throw new Error('accepted a line under the notice');
+  if (!/arrive with the stop/.test(res.stderr)) throw new Error(`unhelpful refusal: ${res.stderr}`);
+  resetNotices();
+});
+
+check('status names the notice', () => {
+  resetNotices();
+  cli('notice', '5h', '75');
+  feed(70, 10);
+  const text = cli('status');
+  if (!/notice at 75%/.test(text)) throw new Error(`notice missing from status: ${text}`);
+  resetNotices();
+});
+
 // --- how fast it is climbing ------------------------------------------------
 
 function writeHistory(points) {

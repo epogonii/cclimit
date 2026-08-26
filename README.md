@@ -23,6 +23,7 @@
   <a href="#install">Install</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#the-ceiling">The ceiling</a> ·
+  <a href="#the-heads-up">The heads-up</a> ·
   <a href="#the-three-actions">The three actions</a> ·
   <a href="#config">Config</a> ·
   <a href="#how-it-fails">How it fails</a> ·
@@ -100,6 +101,7 @@ If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11
 | `/cclimit 5h 85` | stop at 85% of the 5-hour window |
 | `/cclimit 7d 90` | stop at 90% of the 7-day window |
 | `/cclimit ceiling 5h 99` | the number `/cclimit go` cannot lift — `off` removes it |
+| `/cclimit notice 5h 75` | say something at 75% without blocking anything — `off` removes it |
 | `/cclimit go` | continue until the current window resets |
 | `/cclimit action stop\|ask\|warn` | what a crossing does — see below |
 | `/cclimit on` / `/cclimit off` | reinstate / disable, without uninstalling anything |
@@ -160,6 +162,31 @@ readings and divides. No trail, a flat one, or a window that has just reset —
 the sentence simply ends after the ceiling. The model is never asked to predict
 anything, and could not act on it if it were.
 
+## The heads-up
+
+A line stops the turn wherever the turn happens to be, which is rarely a good
+place. A notice is the same number said early, before anything is at stake:
+
+```
+/cclimit notice 5h 75     say something at 75%
+/cclimit 5h 80            stop at 80%
+```
+
+At 75% one line appears above the answer and nothing else changes:
+
+```
+cclimit: 5h usage is at 76% of your plan. Work stops at 80%, about 8m away at the current rate. Window resets Aug 26, 14:20 (in 42m).
+Nothing is blocked — this is the heads-up, said once per window.
+```
+
+Once per window is the whole design. It is recorded against the window's reset
+time, so the next window says it again and the current one does not say it
+twice — a warning repeated at every tool call is a warning nobody reads. Under
+`/cclimit go` it stays quiet: you have already said you know.
+
+There is none until you set one, it has to sit below the line, and it decides
+nothing — it is the only number here that exists purely to be read.
+
 ## The three actions
 
 | | what a crossing does | you keep the turn |
@@ -201,6 +228,7 @@ your line cost money, so set them lower than feels necessary.
   "action": "stop",
   "thresholds": { "five_hour": 85, "seven_day": 90 },
   "ceilings": { "five_hour": null, "seven_day": null },
+  "notices": { "five_hour": null, "seven_day": null },
   "snoozeUntil": null,
   "maxStaleSeconds": 120
 }
@@ -208,7 +236,8 @@ your line cost money, so set them lower than feels necessary.
 
 Also in that directory: `limits.json` (the last reading), `history.json` (the
 trail behind it, for the climb rate), `breach.json` (present only while a line
-is being held), `statusline-wrap.sh` (written by `install`).
+is being held), `notice.json` (which windows have had their heads-up),
+`statusline-wrap.sh` (written by `install`).
 Delete the directory to reset.
 
 ## How it fails

@@ -21,6 +21,7 @@ export const CONFIG_FILE = path.join(STATE_DIR, 'config.json');
 export const LIMITS_FILE = path.join(STATE_DIR, 'limits.json');
 export const BREACH_FILE = path.join(STATE_DIR, 'breach.json');
 export const HISTORY_FILE = path.join(STATE_DIR, 'history.json');
+export const NOTICE_FILE = path.join(STATE_DIR, 'notice.json');
 export const WRAP_FILE = path.join(STATE_DIR, 'statusline-wrap.sh');
 export const SETTINGS_FILE = path.join(CONFIG_DIR, 'settings.json');
 
@@ -40,6 +41,10 @@ export const DEFAULTS = {
   // continuing past the line means continuing to 100%, which is the behaviour
   // everyone had before ceilings existed and is nobody's surprise.
   ceilings: { five_hour: null, seven_day: null },
+  // A heads-up below the line, so the wall is not the first news of it. Off by
+  // default, because an unasked-for interruption is the thing this plugin is
+  // supposed to be careful about.
+  notices: { five_hour: null, seven_day: null },
   // Set by `/cclimit go` to a unix timestamp — usually the reset time of the
   // window that fired. Until then the gates stay quiet.
   snoozeUntil: null,
@@ -65,6 +70,7 @@ export function loadConfig() {
     ...raw,
     thresholds: { ...DEFAULTS.thresholds, ...(raw.thresholds || {}) },
     ceilings: { ...DEFAULTS.ceilings, ...(raw.ceilings || {}) },
+    notices: { ...DEFAULTS.notices, ...(raw.notices || {}) },
   };
 }
 
@@ -142,6 +148,76 @@ export function evaluate(rateLimits, config, now = Math.floor(Date.now() / 1000)
       (candidate.kind === worst.kind &&
         candidate.used_percentage - candidate.threshold > worst.used_percentage - worst.threshold);
     if (outranks) worst = candidate;
+  }
+  return worst;
+}
+
+// Which windows have already had their heads-up, keyed by the reset time of the
+// window it was said for. A new window carries a new reset time, which re-arms
+// the notice without anything having to expire or be cleaned up.
+export function loadNotices() {
+  const raw = readJson(NOTICE_FILE);
+  return raw && typeof raw === 'object' ? raw : {};
+}
+
+export function markNoticed(key, resetsAt) {
+  const seen = loadNotices();
+  seen[key] = Number.isFinite(resetsAt) ? resetsAt : 0;
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(NOTICE_FILE, JSON.stringify(seen) + '\n');
+  } catch {
+    /* a notice that cannot be recorded is a notice repeated, never a block */
+  }
+}
+
+export function rearmNotice(key) {
+  const seen = loadNotices();
+  delete seen[key];
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(NOTICE_FILE, JSON.stringify(seen) + '\n');
+  } catch {
+    /* nothing to undo */
+  }
+}
+
+// The heads-up, which is not a breach: nothing is held, nothing is decided, and
+// it is said once per window rather than once per tool call. It travels in the
+// breach file only because that file is what wakes the gate at all; the gate
+// clears it as soon as the sentence has been delivered.
+export function pendingNotice(rateLimits, config, now = Math.floor(Date.now() / 1000)) {
+  if (!rateLimits || typeof rateLimits !== 'object') return null;
+  if (!config.enabled) return null;
+  // `/cclimit go` is the user saying they know where usage stands. Telling them
+  // again is noise.
+  if (config.snoozeUntil && now < config.snoozeUntil) return null;
+
+  const seen = loadNotices();
+  let worst = null;
+  for (const key of Object.keys(WINDOWS)) {
+    const win = rateLimits[key];
+    if (!win || typeof win.used_percentage !== 'number') continue;
+
+    const notice = config.notices?.[key];
+    if (typeof notice !== 'number' || win.used_percentage < notice) continue;
+    // Past the line, the line has its own thing to say and says it first.
+    const line = config.thresholds?.[key];
+    if (typeof line === 'number' && win.used_percentage >= line) continue;
+
+    const resets_at = Number.isFinite(win.resets_at) ? win.resets_at : null;
+    if (seen[key] === (resets_at ?? 0)) continue;
+
+    const candidate = {
+      window: key,
+      label: WINDOWS[key].label,
+      used_percentage: win.used_percentage,
+      kind: 'notice',
+      threshold: notice,
+      resets_at,
+      ts: now,
+    };
+    if (!worst || candidate.used_percentage - notice > worst.used_percentage - worst.threshold) worst = candidate;
   }
   return worst;
 }
@@ -332,5 +408,19 @@ export function breachMessage(breach, config, { tool, headroom } = {}) {
     `Continue until the window resets: /cclimit go — ` +
     `raise the line: /cclimit ${breach.label} ${Math.min(100, Math.ceil(breach.used_percentage) + 5)} — ` +
     `turn it off: /cclimit off${again}`
+  );
+}
+
+// The heads-up sentence. It has to read as information rather than as an
+// interruption, so it says what is not happening before it says what to run.
+export function noticeMessage(breach, { target, minutes } = {}) {
+  const at = localTime(breach.resets_at);
+  const reset = at ? ` Window resets ${at} (in ${untilReset(breach.resets_at)}).` : '';
+  const eta = typeof minutes === 'number' ? `, about ${minutes}m away at the current rate` : '';
+  const wall = typeof target === 'number' ? ` Work stops at ${target}%${eta}.` : '';
+  return (
+    `cclimit: ${breach.label} usage is at ${pct(breach.used_percentage)} of your plan.${wall}${reset}\n` +
+    `Nothing is blocked — this is the heads-up, said once per window. ` +
+    `Move it: /cclimit notice ${breach.label} <percent> — remove it: /cclimit notice ${breach.label} off`
   );
 }
