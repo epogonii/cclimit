@@ -244,7 +244,10 @@ check('stop blocks a prompt before the turn starts', () => {
   // top-level, and shows sibling fields nested; it goes in both places rather
   // than in the one that turns out to be wrong.
   eq(res.hookSpecificOutput.suppressOriginalPrompt, true, 'suppressOriginalPrompt under hookSpecificOutput');
-  eq(res.suppressOriginalPrompt, true, 'suppressOriginalPrompt at the top level');
+  // And nowhere else: the top-level response schema does not list this field,
+  // so a copy up there is at best ignored and at worst invalidates the whole
+  // response, which would quietly turn the block back into an echoed prompt.
+  if ('suppressOriginalPrompt' in res) throw new Error('suppressOriginalPrompt sent at the top level');
 });
 
 // /cclimit go lifts the line for the next turn; it cannot revive this one.
