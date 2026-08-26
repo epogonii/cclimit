@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# node
+node_modules/
+npm-debug.log*
+
+# local scratch
+*.local
+*.log

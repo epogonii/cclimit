@@ -1,0 +1,79 @@
+name: ci
+
+# Releases are what need proving, so tags trigger this; anything else runs on a
+# pull request or on request.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The README promises Node 18+ and no build step, so parsing every script
+      # under the oldest supported runtime is part of the contract.
+      - name: parse every script
+        run: |
+          for f in bin/*.mjs test/run.mjs docs/logo/gen.mjs; do
+            node --check "$f"
+          done
+
+      # gate.sh is the hot path and runs on every tool call. A syntax error in
+      # it would break every session that installs the plugin.
+      - name: the hot path is valid shell
+        run: sh -n bin/gate.sh
+
+      # Builds its own config directory in a temp path and points
+      # CCLIMIT_CONFIG_DIR at it, so no real ~/.claude is read or written.
+      - name: end-to-end tests
+        run: node test/run.mjs
+
+  manifest:
+    name: plugin manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: the manifests parse and agree with each other
+        run: |
+          node -e '
+            const fs = require("fs");
+            const plugin = JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8"));
+            const market = JSON.parse(fs.readFileSync(".claude-plugin/marketplace.json", "utf8"));
+            const entry = market.plugins.find((p) => p.name === plugin.name);
+            if (!entry) throw new Error(`marketplace.json has no entry for ${plugin.name}`);
+            if (!/^\d+\.\d+\.\d+$/.test(plugin.version)) throw new Error(`version is not semver: ${plugin.version}`);
+            for (const k of ["name", "description", "version", "author", "license"]) {
+              if (!plugin[k]) throw new Error(`plugin.json is missing ${k}`);
+            }
+            const hooks = JSON.parse(fs.readFileSync("hooks/hooks.json", "utf8"));
+            for (const event of ["UserPromptSubmit", "PreToolUse"]) {
+              if (!hooks.hooks[event]) throw new Error(`hooks.json has no ${event} entry`);
+            }
+            // Claude Code registers plugin commands as <plugin>:<file>, so the
+            // README can only promise a "/cclimit x" that ships as x.md.
+            const readme = fs.readFileSync("README.md", "utf8");
+            const promised = new Set([...readme.matchAll(/`\/cclimit ([a-z0-9]+)/g)].map((m) => m[1]));
+            for (const name of promised) {
+              if (!fs.existsSync(`commands/${name}.md`)) {
+                throw new Error(`README promises /cclimit ${name} but commands/${name}.md is missing`);
+              }
+            }
+            const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
+            if (!changelog.includes(`## ${plugin.version}`)) {
+              throw new Error(`CHANGELOG.md has no section for ${plugin.version}`);
+            }
+            console.log(`cclimit ${plugin.version}: manifests agree`);
+          '

@@ -1,0 +1,14 @@
+{
+  "name": "cclimit",
+  "owner": {
+    "name": "Evghenii Pogonii"
+  },
+  "description": "Local-first usage control for Claude Code. Currently one plugin: cclimit, a stop-and-ask gate on your plan's usage windows.",
+  "plugins": [
+    {
+      "name": "cclimit",
+      "source": "./",
+      "description": "Halts the turn when your 5-hour or 7-day plan usage crosses a limit you set, and asks before anything spends past it. Fully local, no API calls."
+    }
+  ]
+}

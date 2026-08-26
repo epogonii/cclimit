@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "cclimit",
+  "description": "Stops Claude Code before your plan usage runs out. Reads the 5-hour and 7-day usage percentages from the statusline payload and halts the turn at a limit you set, so extra-usage spending starts with your say-so instead of by surprise.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Evghenii Pogonii"
+  },
+  "homepage": "https://github.com/epogonii/cclimit",
+  "repository": "https://github.com/epogonii/cclimit",
+  "license": "MIT",
+  "keywords": [
+    "usage",
+    "limits",
+    "budget",
+    "rate-limit",
+    "hooks"
+  ]
+}

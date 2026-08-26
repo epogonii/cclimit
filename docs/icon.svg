@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="cclimit">
+  <title>cclimit</title>
+  <rect width="512" height="512" rx="112" fill="#1C1B22"/>
+
+  <!-- The gauge body is two filled rects rather than a stroked one: strokes are
+       the first thing a thin SVG rasteriser drops, and the PNG fallback is
+       generated from this file. -->
+  <rect x="88" y="164" width="296" height="184" rx="32" fill="#F2F2F0"/>
+  <rect x="110" y="186" width="252" height="140" rx="14" fill="#1C1B22"/>
+  <rect x="384" y="222" width="34" height="68" rx="12" fill="#F2F2F0"/>
+
+  <!-- two bars spent, the third one already past the line -->
+  <rect x="136" y="206" width="56" height="100" rx="10" fill="#F2F2F0"/>
+  <rect x="208" y="206" width="56" height="100" rx="10" fill="#F2F2F0"/>
+  <rect x="280" y="206" width="56" height="100" rx="10" fill="#CC785C"/>
+</svg>

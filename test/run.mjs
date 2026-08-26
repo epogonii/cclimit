@@ -1,0 +1,466 @@
+#!/usr/bin/env node
+// End-to-end tests for cclimit. No dependencies, no network, no fixtures.
+//
+// Everything runs against a throwaway config directory with CCLIMIT_CONFIG_DIR
+// pointed at it, so the real ~/.claude — its settings.json above all, which
+// install() rewrites — is never read and never written. The usage numbers are
+// invented.
+//
+//   node test/run.mjs
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const BIN = path.join(HERE, '..', 'bin');
+const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'cclimit-test-'));
+const CONFIG = path.join(ROOT, '.claude');
+const STATE = path.join(CONFIG, 'cclimit');
+
+// A test that writes to a real config directory would rewrite the user's
+// settings.json, so refuse to run unless the target really is a throwaway.
+if (!ROOT.includes('cclimit-test-')) throw new Error(`refusing to run against ${ROOT}`);
+fs.mkdirSync(STATE, { recursive: true });
+
+const env = { ...process.env, CCLIMIT_CONFIG_DIR: CONFIG };
+const NOW = Math.floor(Date.now() / 1000);
+
+let passed = 0;
+const failures = [];
+
+function check(name, fn) {
+  try {
+    fn();
+    passed++;
+  } catch (err) {
+    failures.push(`${name}: ${err.message}`);
+  }
+}
+
+function eq(actual, expected, what) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`${what}: expected ${e}, got ${a}`);
+}
+
+function run(script, args = [], input = '') {
+  return spawnSync('node', [path.join(BIN, script), ...args], { input, env, encoding: 'utf8' });
+}
+
+function cli(...args) {
+  const res = run('cclimit.mjs', args);
+  if (res.status !== 0 && !args.includes('--expect-fail')) {
+    throw new Error(`cclimit ${args.join(' ')} exited ${res.status}: ${res.stderr}`);
+  }
+  return res.stdout;
+}
+
+function statusline(fiveHour, sevenDay, extra = {}) {
+  return JSON.stringify({
+    model: { id: 'claude-opus-5', display_name: 'Opus 5' },
+    session_id: 'test-session',
+    rate_limits: {
+      five_hour: { used_percentage: fiveHour, resets_at: NOW + 3600 },
+      seven_day: { used_percentage: sevenDay, resets_at: NOW + 86400 },
+    },
+    ...extra,
+  });
+}
+
+function feed(fiveHour, sevenDay) {
+  const payload = statusline(fiveHour, sevenDay);
+  const res = run('sink.mjs', [], payload);
+  return { res, payload };
+}
+
+function gate(event, extra = {}) {
+  const payload = JSON.stringify({ hook_event_name: event, session_id: 'test-session', ...extra });
+  const res = run('gate.mjs', [], payload);
+  return res.stdout.trim() ? JSON.parse(res.stdout) : null;
+}
+
+function breachFile() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(STATE, 'breach.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// --- the collector ----------------------------------------------------------
+
+check('sink copies the statusline payload through untouched', () => {
+  const { res, payload } = feed(20, 10);
+  eq(res.stdout, payload, 'stdout');
+});
+
+check('sink records the usage it saw', () => {
+  feed(20, 10);
+  const stored = JSON.parse(fs.readFileSync(path.join(STATE, 'limits.json'), 'utf8'));
+  eq(stored.rate_limits.five_hour.used_percentage, 20, 'five_hour');
+});
+
+check('usage below the line leaves no breach', () => {
+  feed(20, 10);
+  eq(breachFile(), null, 'breach file');
+});
+
+check('usage over the line writes a breach', () => {
+  feed(90, 10);
+  const b = breachFile();
+  eq(b.window, 'five_hour', 'window');
+  eq(b.threshold, 85, 'threshold');
+});
+
+check('usage falling back under clears the breach', () => {
+  feed(90, 10);
+  feed(20, 10);
+  eq(breachFile(), null, 'breach file');
+});
+
+check('a percentage exactly on the line counts as over', () => {
+  // 85.00000000000001 is the kind of float the payload actually carries, and
+  // the reason the comparison is >= rather than ==.
+  feed(85.00000000000001, 10);
+  eq(breachFile().window, 'five_hour', 'window');
+});
+
+check('the window further past its line is the one reported', () => {
+  feed(86, 99);
+  eq(breachFile().window, 'seven_day', 'window');
+});
+
+check('an account with no usage windows is left alone', () => {
+  const res = run('sink.mjs', [], JSON.stringify({ model: { id: 'x' } }));
+  eq(res.status, 0, 'exit status');
+  eq(breachFile(), null, 'breach file');
+});
+
+check('sink survives input that is not JSON at all', () => {
+  const res = run('sink.mjs', [], 'not json');
+  eq(res.status, 0, 'exit status');
+  eq(res.stdout, 'not json', 'stdout');
+});
+
+check('--render prints a usage line instead of the payload', () => {
+  const res = run('sink.mjs', ['--render'], statusline(42, 11));
+  if (!/5h 42%/.test(res.stdout)) throw new Error(`no usage in: ${res.stdout}`);
+  if (!/7d 11%/.test(res.stdout)) throw new Error(`no 7d usage in: ${res.stdout}`);
+});
+
+// --- the gates --------------------------------------------------------------
+
+check('no breach means the gate says nothing', () => {
+  feed(20, 10);
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+});
+
+check('stop halts the turn on a tool call', () => {
+  feed(90, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(res.continue, false, 'continue');
+  if (!/90%/.test(res.stopReason)) throw new Error(`percentage missing from: ${res.stopReason}`);
+  if (!/\/cclimit go/.test(res.stopReason)) throw new Error(`no way out offered in: ${res.stopReason}`);
+});
+
+check('stop blocks a prompt before the turn starts', () => {
+  feed(90, 10);
+  const res = gate('UserPromptSubmit', { prompt: 'keep going' });
+  eq(res.decision, 'block', 'decision');
+  // Without this the prompt is echoed back under the reason and buries it.
+  eq(res.hookSpecificOutput.suppressOriginalPrompt, true, 'suppressOriginalPrompt');
+});
+
+check('a subagent launch says what it would have cost', () => {
+  feed(90, 10);
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'go' } });
+  if (!/subagent/.test(res.stopReason)) throw new Error(`no subagent warning in: ${res.stopReason}`);
+});
+
+check('ask routes the call to the permission prompt', () => {
+  feed(90, 10);
+  cli('action', 'ask');
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(res.hookSpecificOutput.permissionDecision, 'ask', 'permissionDecision');
+  eq(res.hookSpecificOutput.hookEventName, 'PreToolUse', 'hookEventName');
+});
+
+check('warn lets the call run and only says something', () => {
+  feed(90, 10);
+  cli('action', 'warn');
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(res.continue, undefined, 'continue');
+  if (!/90%/.test(res.systemMessage)) throw new Error(`no percentage in: ${res.systemMessage}`);
+  cli('action', 'stop');
+});
+
+// The user's escape hatches are slash commands, and a slash command reaches
+// this hook as a prompt. The `!` line inside the command file that does the
+// actual work runs without firing PreToolUse, so this one exemption is the
+// whole of what the escape hatches need.
+check('the slash commands that turn cclimit off are never blocked', () => {
+  feed(90, 10);
+  for (const prompt of ['/cclimit go', '/cclimit off', '/cclimit:go', '/cclimit 5h 95']) {
+    eq(gate('UserPromptSubmit', { prompt }), null, `response to ${prompt}`);
+  }
+});
+
+// The exemption above is the one hole in the gate, and it has to stay exactly
+// the size of the commands it exists for. Two ways it could grow: the word
+// appearing in an unrelated path, and — the one that matters — the model
+// running the binary itself to lift a limit the user set on it.
+check('nothing but a slash command gets past the gate', () => {
+  feed(90, 10);
+  const cases = [
+    ['PreToolUse', { tool_name: 'Bash', tool_input: { command: 'node /plugins/cclimit/bin/cclimit.mjs off' } }],
+    ['PreToolUse', { tool_name: 'Bash', tool_input: { command: 'cat /home/me/cclimit/notes.md' } }],
+    ['PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/home/me/cclimit/README.md' } }],
+    ['PreToolUse', { tool_name: 'Bash', tool_input: { command: 'git commit -m "cclimit: fix the gate"' } }],
+    ['UserPromptSubmit', { prompt: 'add a test to cclimit for this' }],
+  ];
+  for (const [event, extra] of cases) {
+    const res = gate(event, extra);
+    const held = res?.continue === false || res?.decision === 'block';
+    if (!held) throw new Error(`not held: ${JSON.stringify(extra)} gave ${JSON.stringify(res)}`);
+  }
+});
+
+// `resets_at` is a Unix timestamp in seconds today. If that ever changes shape,
+// the message the user reads must lose the reset sentence, not carry an
+// "Invalid Date (in NaNm)" through the middle of it.
+check('a reset time in an unexpected shape drops out of the message', () => {
+  const payload = statusline(92, 10, {
+    rate_limits: {
+      five_hour: { used_percentage: 92, resets_at: '2026-08-26T12:08:00Z' },
+      seven_day: { used_percentage: 10, resets_at: null },
+    },
+  });
+  run('sink.mjs', [], payload);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(res.continue, false, 'continue');
+  if (/Invalid Date|NaN|undefined|null/.test(res.stopReason)) {
+    throw new Error(`unreadable message: ${res.stopReason}`);
+  }
+  if (!/92%/.test(res.stopReason)) throw new Error(`lost the percentage: ${res.stopReason}`);
+  const status = cli('status');
+  if (/Invalid Date|NaN|null/.test(status)) throw new Error(`unreadable status: ${status}`);
+});
+
+check('a stale reading is treated as no reading', () => {
+  feed(90, 10);
+  const b = breachFile();
+  fs.writeFileSync(path.join(STATE, 'breach.json'), JSON.stringify({ ...b, ts: NOW - 600 }));
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+});
+
+check('the gate rechecks the config, not just the breach file', () => {
+  feed(90, 10);
+  // Raising the line has to take effect on the next tool call, without waiting
+  // for a statusline render to rewrite the breach file.
+  const b = breachFile();
+  cli('5h', '95');
+  fs.writeFileSync(path.join(STATE, 'breach.json'), JSON.stringify(b));
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  cli('5h', '85');
+});
+
+// --- the command surface ----------------------------------------------------
+
+check('a bare number sets the 5-hour line', () => {
+  cli('70');
+  const config = JSON.parse(fs.readFileSync(path.join(STATE, 'config.json'), 'utf8'));
+  eq(config.thresholds.five_hour, 70, 'five_hour threshold');
+  cli('85');
+});
+
+check('7d takes its own line', () => {
+  cli('7d', '60');
+  const config = JSON.parse(fs.readFileSync(path.join(STATE, 'config.json'), 'utf8'));
+  eq(config.thresholds.seven_day, 60, 'seven_day threshold');
+  cli('7d', '90');
+});
+
+check('a nonsense threshold is refused', () => {
+  const res = run('cclimit.mjs', ['5h', '500']);
+  if (res.status === 0) throw new Error('accepted 500%');
+});
+
+check('go stands down until the window resets', () => {
+  feed(90, 10);
+  cli('go');
+  eq(breachFile(), null, 'breach file');
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  const config = JSON.parse(fs.readFileSync(path.join(STATE, 'config.json'), 'utf8'));
+  if (config.snoozeUntil <= NOW) throw new Error(`snooze is in the past: ${config.snoozeUntil}`);
+});
+
+check('a fresh reading during a snooze stays quiet', () => {
+  feed(95, 10);
+  eq(breachFile(), null, 'breach file');
+});
+
+check('on clears the snooze and restores the hold', () => {
+  cli('on');
+  feed(95, 10);
+  eq(breachFile().window, 'five_hour', 'window');
+});
+
+check('off means nothing is blocked at all', () => {
+  cli('off');
+  feed(95, 99);
+  eq(breachFile(), null, 'breach file');
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  cli('on');
+});
+
+check('status reports usage and the line it is holding', () => {
+  feed(95, 10);
+  const text = cli('status');
+  if (!/95%/.test(text)) throw new Error(`no usage in: ${text}`);
+  if (!/85%/.test(text)) throw new Error(`no threshold in: ${text}`);
+});
+
+// --- wiring the collector in ------------------------------------------------
+
+check('install pipes the collector in front of an existing statusline', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  const original = { type: 'command', command: 'my-statusline --fancy', padding: 2 };
+  fs.writeFileSync(settingsFile, JSON.stringify({ statusLine: original, model: 'opus' }, null, 2));
+
+  cli('install');
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  eq(settings.model, 'opus', 'unrelated settings');
+  eq(settings.statusLine.padding, 2, 'padding');
+  eq(settings.statusLine.refreshInterval, 10, 'refreshInterval');
+  if (!settings.statusLine.command.includes('cclimit')) throw new Error(`statusline not rewired: ${settings.statusLine.command}`);
+
+  const wrapper = fs.readFileSync(path.join(STATE, 'statusline-wrap.sh'), 'utf8');
+  if (!wrapper.includes('my-statusline --fancy')) throw new Error(`original command lost: ${wrapper}`);
+  if (!wrapper.includes('sink.mjs')) throw new Error(`collector missing: ${wrapper}`);
+  if (!fs.existsSync(`${settingsFile}.cclimit-backup`)) throw new Error('no backup written');
+});
+
+check('install run twice changes nothing the second time', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  const before = fs.readFileSync(settingsFile, 'utf8');
+  const text = cli('install');
+  eq(fs.readFileSync(settingsFile, 'utf8'), before, 'settings.json');
+  if (!/already/.test(text)) throw new Error(`unexpected output: ${text}`);
+});
+
+check('uninstall puts the original statusline back', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  cli('uninstall');
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  eq(settings.statusLine.command, 'my-statusline --fancy', 'command');
+  eq(settings.statusLine.padding, 2, 'padding');
+  eq(fs.existsSync(path.join(STATE, 'statusline-wrap.sh')), false, 'wrapper removed');
+});
+
+check('install adds its own statusline when there is none', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  fs.writeFileSync(settingsFile, JSON.stringify({ model: 'opus' }, null, 2));
+  cli('install');
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  if (!settings.statusLine.command.includes('--render')) throw new Error(`unexpected command: ${settings.statusLine.command}`);
+  cli('uninstall');
+  const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  eq(after.statusLine, undefined, 'statusLine after uninstall');
+});
+
+check('uninstall restores a statusline install did not understand', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  const odd = { type: 'something-else', text: 'hand written' };
+  fs.writeFileSync(settingsFile, JSON.stringify({ statusLine: odd }, null, 2));
+  cli('install');
+  cli('uninstall');
+  const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  eq(after.statusLine?.text, 'hand written', 'restored statusLine');
+});
+
+// --- the fast path ----------------------------------------------------------
+
+check('gate.sh exits without starting node when nothing is wrong', () => {
+  feed(20, 10);
+  const res = spawnSync(path.join(BIN, 'gate.sh'), [], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
+    env,
+    encoding: 'utf8',
+  });
+  eq(res.status, 0, 'exit status');
+  eq(res.stdout, '', 'stdout');
+});
+
+check('gate.sh hands a real breach to the gate', () => {
+  cli('on');
+  feed(90, 10);
+  const res = spawnSync(path.join(BIN, 'gate.sh'), [], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+    env,
+    encoding: 'utf8',
+  });
+  const parsed = JSON.parse(res.stdout);
+  eq(parsed.continue, false, 'continue');
+});
+
+// --- the slash commands -----------------------------------------------------
+
+// Claude Code registers a plugin command as `<plugin>:<file>`, and resolves
+// `/cclimit go` by treating the first word after the plugin name as the file
+// name. So every subcommand the docs and the breach message mention has to
+// exist as its own file, and each file has to forward to the same binary.
+check('every documented subcommand has a command file that forwards to it', () => {
+  const dir = path.join(HERE, '..', 'commands');
+  const documented = ['status', 'go', 'on', 'off', 'action', '5h', '7d', 'install', 'uninstall'];
+  for (const name of documented) {
+    const file = path.join(dir, `${name}.md`);
+    if (!fs.existsSync(file)) throw new Error(`no command file for /cclimit ${name}`);
+    const text = fs.readFileSync(file, 'utf8');
+    if (!text.includes('${CLAUDE_PLUGIN_ROOT}/bin/cclimit.mjs')) throw new Error(`${name}.md does not call the binary`);
+    if (!text.includes(`cclimit.mjs" ${name} $ARGUMENTS`)) throw new Error(`${name}.md forwards the wrong subcommand`);
+    if (!/^allowed-tools: Bash\(node:\*\)$/m.test(text)) throw new Error(`${name}.md is missing allowed-tools`);
+  }
+});
+
+// The whole point is that a human decides whether to spend past the line. A
+// command file the model can call on its own lets Claude lift its own brake —
+// and the gate waves those calls through by design.
+check('the model cannot invoke the commands that lift the limit', () => {
+  const dir = path.join(HERE, '..', 'commands');
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.md'))) {
+    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    if (!/^disable-model-invocation: true$/m.test(text)) {
+      throw new Error(`${file} is invocable by the model`);
+    }
+  }
+});
+
+// Every `/cclimit <x>` the plugin prints at the user is an escape hatch, so a
+// missing command file there is a user with no way out.
+check('every subcommand the plugin prints at the user has a command file', () => {
+  feed(90, 10);
+  const gate = spawnSync(path.join(BIN, 'gate.sh'), [], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }),
+    env,
+    encoding: 'utf8',
+  });
+  const printed = [cli('status'), JSON.parse(gate.stdout).stopReason].join('\n');
+  const offered = new Set([...printed.matchAll(/\/cclimit ([a-z0-9]+)/g)].map((m) => m[1]));
+  if (offered.size < 3) throw new Error(`expected several offers, saw: ${[...offered]}`);
+  for (const name of offered) {
+    if (!fs.existsSync(path.join(HERE, '..', 'commands', `${name}.md`))) {
+      throw new Error(`the plugin offers /cclimit ${name} but ships no ${name}.md`);
+    }
+  }
+});
+
+fs.rmSync(ROOT, { recursive: true, force: true });
+
+if (failures.length) {
+  process.stderr.write(`${failures.length} failed:\n${failures.map((f) => `  - ${f}`).join('\n')}\n`);
+  process.exit(1);
+}
+process.stdout.write(`cclimit: ${passed} checks passed\n`);
