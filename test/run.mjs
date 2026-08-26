@@ -531,6 +531,39 @@ check('on clears the snooze and restores the hold', () => {
   eq(breachFile().window, 'five_hour', 'window');
 });
 
+// A session that sat idle through a rollover has a breach file naming a window
+// that is already over. Taking its reset time at face value writes a snooze
+// that expired before it was saved: the next tool call is stopped again, and
+// the sentence just printed said it would not be.
+check('go never stands down until a moment already past', () => {
+  feed(90, 10);
+  const stale = JSON.parse(fs.readFileSync(path.join(STATE, 'breach.json'), 'utf8'));
+  fs.writeFileSync(path.join(STATE, 'breach.json'), JSON.stringify({ ...stale, resets_at: NOW - 600 }) + '\n');
+
+  const text = cli('go');
+  const config = JSON.parse(fs.readFileSync(path.join(STATE, 'config.json'), 'utf8'));
+  if (config.snoozeUntil <= NOW) throw new Error(`snooze is in the past: ${config.snoozeUntil}`);
+  // The live reading still has a reset ahead of it, so that is the one the
+  // stand-down runs to rather than the one the stale file named.
+  eq(config.snoozeUntil, NOW + 3600, 'snoozed until the next reset still to come');
+  if (!/standing down/.test(text)) throw new Error(`unexpected output: ${text}`);
+  // And the stand-down has to actually hold, which is the whole point of it.
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  cli('on');
+});
+
+// With no reset time anywhere to go on, an hour is the fallback — and an hour
+// from now is still an hour from now.
+check('go falls back to an hour when no reset time is known', () => {
+  cli('on');
+  fs.rmSync(path.join(STATE, 'breach.json'), { force: true });
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  cli('go');
+  const config = JSON.parse(fs.readFileSync(path.join(STATE, 'config.json'), 'utf8'));
+  if (config.snoozeUntil <= NOW) throw new Error(`snooze is in the past: ${config.snoozeUntil}`);
+  cli('on');
+});
+
 check('off means nothing is blocked at all', () => {
   cli('off');
   feed(95, 99);

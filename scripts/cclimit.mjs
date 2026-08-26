@@ -391,11 +391,20 @@ function go() {
   const config = loadConfig();
   const breach = loadBreach();
   const usage = currentUsage();
-  let until = breach?.resets_at ?? null;
+
+  // A reset time that has already passed is no reprieve at all: the snooze
+  // expires the moment it is written, the gate stops the very next tool call,
+  // and the sentence printed here promises a stand-down that never happened.
+  // The breach file is written by the collector against the reading at the
+  // time, so a session that sat idle through a rollover has one naming a
+  // window that is already over. Only a time still ahead of us is an answer.
+  const ahead = (t) => (typeof t === 'number' && t > now ? t : null);
+
+  let until = ahead(breach?.resets_at);
   if (!until && usage) {
     const resets = Object.keys(WINDOWS)
-      .map((k) => usage.rateLimits[k]?.resets_at)
-      .filter((t) => typeof t === 'number' && t > now);
+      .map((k) => ahead(usage.rateLimits[k]?.resets_at))
+      .filter(Boolean);
     until = resets.length ? Math.min(...resets) : null;
   }
   config.snoozeUntil = until ?? now + 3600;
