@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.9
+
+- Every state file is written whole or not at all. The collector runs in the
+  statusline of every open session, so two sessions could easily be writing the
+  same file at the same moment, and a reader landing between the two writes saw
+  half of one reading spliced onto half of the other — which parsed as no
+  reading at all, and a gate with no reading stands aside. Each file now goes
+  to a temporary name first and is renamed into place, so a reader sees the old
+  reading or the new one and never a mixture.
+- The collector stays quiet when the statusline command after it never reads
+  its stdin. A statusline that prints a fixed string closes the pipe at once,
+  the copy-through then fails with `EPIPE`, and Node printed a stack trace to
+  stderr every ten seconds. The reading was recorded either way, so the error
+  is now swallowed rather than reported.
+- The statusline wrapper looks for the collector under `CLAUDE_CONFIG_DIR`
+  before `~/.claude`. Anyone who moved their config with that variable had the
+  plugin cache move with it, and a wrapper fixed on `$HOME` fell through to the
+  path of whatever version was installed at the time — silently, for good.
+  Wrappers written by every earlier version are repaired on the next `/cclimit`
+  command, and only the lookup line is touched.
+- `/cclimit install` writes the wrapper again when `settings.json` still points
+  at it but the file itself is gone. It used to report the collector as already
+  wired and do nothing, and the statusline stayed broken until `uninstall` and
+  `install` were run by hand.
+- The scripts read their clock through one function, and the tests pin it with
+  `CCLIMIT_NOW` the way they already pin the config directory with
+  `CCLIMIT_CONFIG_DIR`. A slow test run used to drift far enough from the frozen
+  timestamps in the fixtures for readings to look stale.
+- The argument hint on `/cclimit` and the usage line printed for an unknown
+  subcommand list `ceiling`, `notice` and `alert`. Both predate all three, so
+  the one place a user looks after a typo did not mention three of the commands
+  they might have meant.
+
 ## 0.5.8
 
 - A blocked prompt sends `suppressOriginalPrompt` under `hookSpecificOutput`
