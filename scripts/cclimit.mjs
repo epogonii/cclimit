@@ -469,7 +469,16 @@ function shellQuote(value) {
 // wrappers written by earlier versions and they did not all put the lookup in
 // the same place: 0.1.1 wrote it as the fallback half of `[ -f "$SINK" ] || …`,
 // where a second line would land outside the test and run unconditionally.
+//
+// The cache is looked for under CLAUDE_CONFIG_DIR before ~/.claude, because
+// that is where Claude Code puts it for anyone who moved their config -- and
+// Claude Code runs the statusline with that variable in its environment.
 const SINK_LOOKUP =
+  'SINK=$(ls -1dt "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/cclimit/*/scripts/sink.mjs "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)';
+
+// What 0.5.2 through 0.5.8 wrote there, before the lookup honoured
+// CLAUDE_CONFIG_DIR.
+const SINK_LOOKUP_HOME =
   'SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/scripts/sink.mjs "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)';
 
 // What 0.5.1 and earlier wrote there, when the executables lived in bin/.
@@ -480,8 +489,10 @@ const SINK_LOOKUP_BIN =
 // plugin updates: one written before the move goes on finding the collector
 // under bin/, and an old version left in the cache is exactly where it finds
 // one. Nothing breaks loudly — the collector simply stays the old collector
-// for good. Only the lookup is rewritten, so whatever statusline command the
-// user had wrapped around it is left as it is.
+// for good. The same goes for a wrapper that only looks under ~/.claude on a
+// machine where the cache moved with CLAUDE_CONFIG_DIR. Only the lookup is
+// rewritten, so whatever statusline command the user had wrapped around it is
+// left as it is.
 function healWrapper() {
   let text;
   try {
@@ -489,9 +500,10 @@ function healWrapper() {
   } catch {
     return;
   }
-  if (!text.includes(SINK_LOOKUP_BIN)) return;
+  const stale = [SINK_LOOKUP_HOME, SINK_LOOKUP_BIN].find((old) => text.includes(old));
+  if (!stale) return;
   try {
-    writeExecutable(WRAP_FILE, text.replace(SINK_LOOKUP_BIN, SINK_LOOKUP));
+    writeExecutable(WRAP_FILE, text.replace(stale, SINK_LOOKUP));
   } catch {
     // A statusline running the old collector is a much smaller problem than a
     // command that refuses to answer, so a wrapper that cannot be written is
@@ -536,6 +548,19 @@ function install() {
   const existing = settings.statusLine;
 
   if (existing?.command === WRAP_FILE || existing?.command?.includes('cclimit')) {
+    // settings.json still points at the wrapper, but the wrapper itself is gone
+    // -- a state directory wiped by hand, most likely. Claude Code is running a
+    // command that does not exist, so there is no statusline and no collector,
+    // and this is the only command that knows how to write the file back.
+    // settings.json is left alone: it already says the right thing.
+    if (existing.command === WRAP_FILE && !fs.existsSync(WRAP_FILE)) {
+      const kept = config.originalStatusLine;
+      const downstream = kept?.type === 'command' && kept.command ? kept.command : null;
+      fs.mkdirSync(STATE_DIR, { recursive: true });
+      writeExecutable(WRAP_FILE, wrapperScript(downstream));
+      out(`cclimit: your statusline already ran the collector, but ${WRAP_FILE} was missing. Written again.`);
+      return;
+    }
     out('cclimit: the collector is already in your statusline. Nothing to do.');
     return;
   }

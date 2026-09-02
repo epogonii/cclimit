@@ -1322,6 +1322,96 @@ check('a wrapper from before the lookup moved onto its own line still works', ()
   fs.rmSync(wrapper, { force: true });
 });
 
+// Claude Code keeps the plugin cache under CLAUDE_CONFIG_DIR when that is set,
+// and runs the statusline with it in the environment. A lookup that only knew
+// ~/.claude found nothing on such a machine, fell back to the path pinned at
+// install time, and went quiet for good the first time that copy was cleaned
+// out of the cache.
+check('the wrapper looks for the collector under CLAUDE_CONFIG_DIR first', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  const saved = fs.existsSync(settingsFile) ? fs.readFileSync(settingsFile, 'utf8') : null;
+  fs.writeFileSync(settingsFile, JSON.stringify({ model: 'opus' }, null, 2));
+  cli('install');
+  const wrapper = fs.readFileSync(path.join(STATE, 'statusline-wrap.sh'), 'utf8');
+  cli('uninstall');
+  if (saved === null) fs.rmSync(settingsFile, { force: true });
+  else fs.writeFileSync(settingsFile, saved);
+
+  const lookup = wrapper.split('\n').find((line) => line.startsWith('SINK=$(ls'));
+  if (!lookup) throw new Error(`no lookup line in the wrapper: ${wrapper}`);
+
+  const moved = path.join(ROOT, 'moved-config');
+  const home = path.join(ROOT, 'fake-home');
+  const inMoved = path.join(moved, 'plugins', 'cache', 'mp', 'cclimit', '1.0.0', 'scripts', 'sink.mjs');
+  const inHome = path.join(home, '.claude', 'plugins', 'cache', 'mp', 'cclimit', '1.0.0', 'scripts', 'sink.mjs');
+  fs.mkdirSync(path.dirname(inMoved), { recursive: true });
+  fs.mkdirSync(path.dirname(inHome), { recursive: true });
+  fs.writeFileSync(inMoved, '');
+  fs.writeFileSync(inHome, '');
+
+  const resolve = (extra) =>
+    String(spawnSync('sh', ['-c', `${lookup}\nprintf %s "$SINK"`], { env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: '', ...extra } }).stdout);
+  eq(resolve({ CLAUDE_CONFIG_DIR: moved }), inMoved, 'with CLAUDE_CONFIG_DIR set');
+  eq(resolve({}), inHome, 'with CLAUDE_CONFIG_DIR unset');
+  fs.rmSync(moved, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+check('a wrapper that only looked under ~/.claude is repaired', () => {
+  const wrapper = path.join(STATE, 'statusline-wrap.sh');
+  fs.writeFileSync(
+    wrapper,
+    ['#!/bin/sh',
+      'SINK=$(ls -1dt "$HOME"/.claude/plugins/cache/*/cclimit/*/scripts/sink.mjs "$HOME"/.claude/plugins/cache/*/cclimit/*/bin/sink.mjs 2>/dev/null | head -1)',
+      '[ -f "$SINK" ] || SINK=/somewhere/else/sink.mjs',
+      'if [ -f "$SINK" ]; then',
+      '  node "$SINK" | my-statusline --fancy',
+      'else',
+      '  cat | my-statusline --fancy',
+      'fi',
+      ''].join('\n'),
+    { mode: 0o755 },
+  );
+  cli('status');
+  const text = fs.readFileSync(wrapper, 'utf8');
+  if (!text.includes('${CLAUDE_CONFIG_DIR:-$HOME/.claude}')) throw new Error(`lookup not repaired: ${text}`);
+  if (!text.includes('/cclimit/*/bin/sink.mjs')) throw new Error(`old installs no longer found: ${text}`);
+  if (!text.includes('my-statusline --fancy')) throw new Error(`statusline command lost: ${text}`);
+  if (!text.includes('/somewhere/else/sink.mjs')) throw new Error(`fallback path lost: ${text}`);
+  eq(spawnSync('sh', ['-n', wrapper]).status, 0, 'the repaired wrapper is valid shell');
+  cli('status');
+  eq(fs.readFileSync(wrapper, 'utf8'), text, 'a repaired wrapper is left alone');
+  fs.rmSync(wrapper, { force: true });
+});
+
+// settings.json can outlive the wrapper it points at -- a state directory
+// removed by hand leaves Claude Code running a command that is not there. The
+// install command is the one that knows how to write it, so it must not stop
+// at "already installed" while the file is missing.
+check('install writes the wrapper back when settings still point at it', () => {
+  const settingsFile = path.join(CONFIG, 'settings.json');
+  const saved = fs.existsSync(settingsFile) ? fs.readFileSync(settingsFile, 'utf8') : null;
+  const original = { type: 'command', command: 'my-statusline --fancy', padding: 2 };
+  fs.writeFileSync(settingsFile, JSON.stringify({ statusLine: original }, null, 2));
+  cli('install');
+  const wrapper = path.join(STATE, 'statusline-wrap.sh');
+  fs.rmSync(wrapper, { force: true });
+  const before = fs.readFileSync(settingsFile, 'utf8');
+
+  const text = cli('install');
+  if (!/missing/.test(text)) throw new Error(`unexpected output: ${text}`);
+  if (!fs.existsSync(wrapper)) throw new Error('wrapper not written back');
+  const written = fs.readFileSync(wrapper, 'utf8');
+  if (!written.includes('my-statusline --fancy')) throw new Error(`original command lost: ${written}`);
+  eq(fs.statSync(wrapper).mode & 0o111, 0o111, 'executable bits');
+  eq(spawnSync('sh', ['-n', wrapper]).status, 0, 'valid shell');
+  eq(fs.readFileSync(settingsFile, 'utf8'), before, 'settings.json is left alone');
+
+  cli('uninstall');
+  if (saved === null) fs.rmSync(settingsFile, { force: true });
+  else fs.writeFileSync(settingsFile, saved);
+});
+
 // Every state file is written to a sibling and renamed into place, so a reader
 // in another session never sees a half-written one. The sibling must not be
 // left behind either way.
