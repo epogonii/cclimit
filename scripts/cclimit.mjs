@@ -44,6 +44,7 @@ import {
   newerSelf,
   rearmNotice,
   writeBreach,
+  nowSeconds,
 } from './lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -64,7 +65,7 @@ if (newer) {
 }
 const args = process.argv.slice(2).filter((a) => a !== '--json');
 const asJson = process.argv.includes('--json');
-const now = Math.floor(Date.now() / 1000);
+const now = nowSeconds();
 
 function out(text) {
   process.stdout.write(text.replace(/\n*$/, '\n'));

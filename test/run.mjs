@@ -25,8 +25,11 @@ const STATE = path.join(CONFIG, 'cclimit');
 if (!ROOT.includes('cclimit-test-')) throw new Error(`refusing to run against ${ROOT}`);
 fs.mkdirSync(STATE, { recursive: true });
 
-const env = { ...process.env, CCLIMIT_CONFIG_DIR: CONFIG };
 const NOW = Math.floor(Date.now() / 1000);
+// The scripts read their clock from CCLIMIT_NOW so that a reading the suite
+// plants and a reading a script records land at the same instant, however slow
+// the machine running the suite is.
+const env = { ...process.env, CCLIMIT_CONFIG_DIR: CONFIG, CCLIMIT_NOW: String(NOW) };
 
 let passed = 0;
 const failures = [];
@@ -51,6 +54,7 @@ function run(script, args = [], input = '', extraEnv = null) {
     input,
     env: extraEnv ? { ...env, ...extraEnv } : env,
     encoding: 'utf8',
+    timeout: 60000,
   });
 }
 

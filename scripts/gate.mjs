@@ -25,6 +25,7 @@ import {
   resumeMessage,
   downgradeMessage,
   pct,
+  nowSeconds,
 } from './lib.mjs';
 
 function allow() {
@@ -93,7 +94,7 @@ if (event !== 'UserPromptSubmit' && event !== 'PreToolUse') allow();
 const config = loadConfig();
 if (!config.enabled) allow();
 
-const now = Math.floor(Date.now() / 1000);
+const now = nowSeconds();
 
 const breach = loadBreach();
 if (!breach || typeof breach.used_percentage !== 'number') allow();

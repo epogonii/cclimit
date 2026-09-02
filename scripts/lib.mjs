@@ -26,6 +26,17 @@ export const RESUME_FILE = path.join(STATE_DIR, 'resume.json');
 export const WRAP_FILE = path.join(STATE_DIR, 'statusline-wrap.sh');
 export const SETTINGS_FILE = path.join(CONFIG_DIR, 'settings.json');
 
+// CCLIMIT_NOW is the tests' clock, for the same reason CCLIMIT_CONFIG_DIR is
+// their state directory. The suite plants readings against one instant and
+// then runs the scripts, and a script that stamps its own reading from the
+// wall clock instead lands it a few seconds later on every slow machine --
+// far enough, on a slow enough one, to turn a flat trail into a climbing one.
+// Nothing outside the tests sets it.
+export function nowSeconds() {
+  const fixed = Number(process.env.CCLIMIT_NOW);
+  return Number.isFinite(fixed) && fixed > 0 ? Math.floor(fixed) : Math.floor(Date.now() / 1000);
+}
+
 export const WINDOWS = {
   five_hour: { label: '5h', flag: '5h' },
   seven_day: { label: '7d', flag: '7d' },
@@ -148,7 +159,7 @@ export function loadLimits() {
   return readJson(LIMITS_FILE);
 }
 
-export function saveLimits(rateLimits, now = Math.floor(Date.now() / 1000)) {
+export function saveLimits(rateLimits, now = nowSeconds()) {
   writeJson(LIMITS_FILE, { rate_limits: rateLimits, ts: now });
 }
 
@@ -172,7 +183,7 @@ export function writeBreach(breach) {
 // statusline payload: { five_hour: { used_percentage, resets_at }, ... }.
 // Percentages come through as floats with rounding dirt on them (56.00000000000001),
 // so the comparison is >= and never ==.
-export function evaluate(rateLimits, config, now = Math.floor(Date.now() / 1000)) {
+export function evaluate(rateLimits, config, now = nowSeconds()) {
   if (!rateLimits || typeof rateLimits !== 'object') return null;
   if (!config.enabled) return null;
 
@@ -252,7 +263,7 @@ export function rearmNotice(key) {
 // it is said once per window rather than once per tool call. It travels in the
 // breach file only because that file is what wakes the gate at all; the gate
 // clears it as soon as the sentence has been delivered.
-export function pendingNotice(rateLimits, config, now = Math.floor(Date.now() / 1000)) {
+export function pendingNotice(rateLimits, config, now = nowSeconds()) {
   if (!rateLimits || typeof rateLimits !== 'object') return null;
   if (!config.enabled) return null;
   // `/cclimit go` is the user saying they know where usage stands. Telling them
@@ -292,7 +303,7 @@ export function pendingNotice(rateLimits, config, now = Math.floor(Date.now() / 
 // said about it was that it was full. Armed by the collector at the moment the
 // reset time changes — the only moment the change is visible — and said by the
 // gate whenever the user next turns up, which may be hours later.
-export function armResume(prev, rateLimits, config, now = Math.floor(Date.now() / 1000)) {
+export function armResume(prev, rateLimits, config, now = nowSeconds()) {
   if (!prev || !rateLimits || !config.enabled) return null;
 
   const armed = readJson(RESUME_FILE) || {};
@@ -328,7 +339,7 @@ export function armResume(prev, rateLimits, config, now = Math.floor(Date.now() 
   return armed;
 }
 
-export function pendingResume(rateLimits, config, now = Math.floor(Date.now() / 1000)) {
+export function pendingResume(rateLimits, config, now = nowSeconds()) {
   if (!rateLimits || typeof rateLimits !== 'object') return null;
   if (!config.enabled) return null;
 
@@ -381,7 +392,7 @@ export function loadHistory() {
   return Array.isArray(raw) ? raw : [];
 }
 
-export function recordHistory(rateLimits, now = Math.floor(Date.now() / 1000)) {
+export function recordHistory(rateLimits, now = nowSeconds()) {
   const entry = { ts: now };
   for (const key of Object.keys(WINDOWS)) {
     const used = rateLimits?.[key]?.used_percentage;
@@ -436,7 +447,7 @@ export function mergeLimits(previous, incoming) {
 // too few readings, too short a span, usage flat or falling. A window that has
 // reset counts as falling, which is the honest answer — the rate before a reset
 // says nothing about the rate after one.
-export function burnRate(history, key, now = Math.floor(Date.now() / 1000)) {
+export function burnRate(history, key, now = nowSeconds()) {
   const points = (history || [])
     .filter((e) => Number.isFinite(e?.ts) && typeof e?.[key] === 'number' && now - e.ts <= 1800)
     .sort((a, b) => a.ts - b.ts);
@@ -465,7 +476,7 @@ export function minutesTo(used, target, perMinute) {
 // produces a number with no information in it.
 export const PROJECTION_HORIZON = 6 * 3600;
 
-export function projectedAtReset(used, resetsAt, perMinute, now = Math.floor(Date.now() / 1000)) {
+export function projectedAtReset(used, resetsAt, perMinute, now = nowSeconds()) {
   if (!Number.isFinite(used) || !Number.isFinite(resetsAt)) return null;
   if (!Number.isFinite(perMinute) || perMinute <= 0) return null;
   const seconds = resetsAt - now;
@@ -478,7 +489,7 @@ export function projectedAtReset(used, resetsAt, perMinute, now = Math.floor(Dat
 // level is a ramp, and a ramp says nothing about when the spending happened.
 const SPARK_CHARS = '\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588';
 
-export function sparkline(history, key, now = Math.floor(Date.now() / 1000), cells = 30, seconds = 3600) {
+export function sparkline(history, key, now = nowSeconds(), cells = 30, seconds = 3600) {
   const points = (history || [])
     .filter((e) => Number.isFinite(e?.ts) && typeof e?.[key] === 'number' && now - e.ts <= seconds)
     .sort((a, b) => a.ts - b.ts);
@@ -620,7 +631,7 @@ export function pct(value) {
 // payload carries. Anything else — a string, a null, a future change of format
 // — has to read as "no reset time known", never as "Invalid Date" in the middle
 // of a sentence the user is meant to act on.
-export function untilReset(resetsAt, now = Math.floor(Date.now() / 1000)) {
+export function untilReset(resetsAt, now = nowSeconds()) {
   if (!Number.isFinite(resetsAt) || resetsAt <= 0) return null;
   const seconds = resetsAt - now;
   if (seconds <= 0) return 'any moment now';
