@@ -166,6 +166,36 @@ check('a window that really has reset is taken at its word', () => {
   fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
 });
 
+// A reset time further ahead than the window is long cannot be real, and the
+// staleness rule would otherwise hold on to it for good: no honest reading ever
+// carries a later reset, so every one of them would be thrown out as stale.
+check('a stored reading with an impossible reset time does not outlive the next real one', () => {
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  feedWindows(12, 9999999999, 30, 9999999999);
+  feedWindows(38, NOW + 3600, 17, NOW + 86400);
+  eq(storedLimits().five_hour.used_percentage, 38, 'five_hour');
+  eq(storedLimits().seven_day.used_percentage, 17, 'seven_day');
+  eq(storedLimits().five_hour.resets_at, NOW + 3600, 'five_hour reset');
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+});
+
+check('an incoming reading with an impossible reset time does not displace a real one', () => {
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  feedWindows(38, NOW + 3600, 17, NOW + 86400);
+  feedWindows(12, 9999999999, 30, 9999999999);
+  eq(storedLimits().five_hour.used_percentage, 38, 'five_hour');
+  eq(storedLimits().seven_day.used_percentage, 17, 'seven_day');
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+});
+
+check('a reset time at the far edge of its window is still believed', () => {
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+  feedWindows(20, NOW + 5 * 3600, 10, NOW + 7 * 86400);
+  feedWindows(15, NOW + 600, 10, NOW + 7 * 86400);
+  eq(storedLimits().five_hour.used_percentage, 20, 'five_hour');
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+});
+
 check('one window going stale does not hold the other back', () => {
   fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
   feedWindows(60, NOW + 3600, 40, NOW + 86400);

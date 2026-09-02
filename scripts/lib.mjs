@@ -38,9 +38,15 @@ export function nowSeconds() {
 }
 
 export const WINDOWS = {
-  five_hour: { label: '5h', flag: '5h' },
-  seven_day: { label: '7d', flag: '7d' },
+  five_hour: { label: '5h', flag: '5h', seconds: 5 * 3600 },
+  seven_day: { label: '7d', flag: '7d', seconds: 7 * 86400 },
 };
+
+// How far past the end of a window a reset time may still be believed. A real
+// reset never lies further ahead than the window is long; the slack covers a
+// clock that disagrees with the server's by a little, not a number that could
+// only have come from a broken payload.
+const RESET_SLACK_SECONDS = 3600;
 
 export const DEFAULTS = {
   enabled: true,
@@ -412,7 +418,21 @@ export function recordHistory(rateLimits, now = nowSeconds()) {
 // Usage inside a window only ever climbs, and a reading from a window that has
 // already reset carries the old reset time. Both are enough to tell a stale
 // reading from a new one without asking which session it came from.
-export function mergeLimits(previous, incoming) {
+//
+// The comparison trusts the reset time, so a reset time that cannot be real —
+// further ahead than the window is long — must not take part in it. Left in,
+// one such reading would outrank every honest one that followed, for good: no
+// real reset ever comes later than it, so the rule above would keep it forever.
+// A stored reading like that is treated as no reading, and an incoming one is
+// not allowed to displace a reading that makes sense.
+export function plausibleReset(key, resetsAt, now = nowSeconds()) {
+  if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) return false;
+  const length = WINDOWS[key]?.seconds;
+  if (typeof length !== 'number') return true;
+  return resetsAt <= now + length + RESET_SLACK_SECONDS;
+}
+
+export function mergeLimits(previous, incoming, now = nowSeconds()) {
   if (!incoming || typeof incoming !== 'object') return incoming ?? null;
   if (!previous || typeof previous !== 'object') return incoming;
 
@@ -427,6 +447,14 @@ export function mergeLimits(previous, incoming) {
       typeof before?.used_percentage === 'number' &&
       typeof win?.used_percentage === 'number'
     ) {
+      if (!plausibleReset(key, stale, now)) {
+        merged[key] = win;
+        continue;
+      }
+      if (!plausibleReset(key, fresh, now)) {
+        merged[key] = before;
+        continue;
+      }
       // A reading from a window that has already turned over says nothing about
       // the one running now.
       if (fresh < stale) {
