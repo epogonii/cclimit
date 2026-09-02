@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.10
+
+- A single reading with an impossible reset time no longer wins for good. The
+  staleness rule keeps the stored reading whenever the incoming one carries an
+  earlier reset, on the grounds that a reading from a window that has already
+  turned over says nothing about the one running now — and it trusted the reset
+  time it compared. One reading whose reset lay further ahead than the window is
+  long, a number no real payload produces, therefore outranked every honest
+  reading that followed, and the collector reported it while the gates stood on
+  a number that never moved. A reset time is now only believed when it falls
+  within the window's own length of the present, plus an hour of slack for a
+  clock that disagrees with the server's. A stored reading that fails the check
+  is treated as no reading, so the next real one replaces it; an incoming one
+  that fails it cannot displace a reading that makes sense.
+
 ## 0.5.9
 
 - Every state file is written whole or not at all. The collector runs in the
