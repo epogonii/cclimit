@@ -74,6 +74,36 @@ function readJson(file) {
   }
 }
 
+// Every open session renders its own statusline every ten seconds, and every
+// render rewrites these files. A reader that lands between another writer's
+// truncate and its write sees an empty file, which readJson turns into "no
+// data" -- and for the collector that means the trail behind the last reading
+// is gone. So the text goes to a sibling file first and is renamed into place,
+// which is the one step the filesystem promises to do whole or not at all.
+// The temporary name is unique per process because those sessions write the
+// same files at the same time.
+function writeJson(file, value, pretty = false) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const text = JSON.stringify(value, null, pretty ? 2 : undefined) + '\n';
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text);
+    try {
+      fs.renameSync(tmp, file);
+    } catch {
+      // A filesystem that refuses to replace a file someone has open loses the
+      // atomicity, not the write.
+      fs.writeFileSync(file, text);
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* renamed into place, or never written */
+    }
+  }
+}
+
 export function loadConfig() {
   const raw = readJson(CONFIG_FILE) || {};
   return {
@@ -86,8 +116,7 @@ export function loadConfig() {
 }
 
 export function saveConfig(config) {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
+  writeJson(CONFIG_FILE, config, true);
 }
 
 // The models cclimit is willing to push work down onto, cheapest first. Only
@@ -119,6 +148,10 @@ export function loadLimits() {
   return readJson(LIMITS_FILE);
 }
 
+export function saveLimits(rateLimits, now = Math.floor(Date.now() / 1000)) {
+  writeJson(LIMITS_FILE, { rate_limits: rateLimits, ts: now });
+}
+
 export function loadBreach() {
   return readJson(BREACH_FILE);
 }
@@ -132,8 +165,7 @@ export function clearBreach() {
 }
 
 export function writeBreach(breach) {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(BREACH_FILE, JSON.stringify(breach) + '\n');
+  writeJson(BREACH_FILE, breach);
 }
 
 // The one decision. `rateLimits` is the object Claude Code puts in the
@@ -200,8 +232,7 @@ export function markNoticed(key, resetsAt) {
   const seen = loadNotices();
   seen[key] = Number.isFinite(resetsAt) ? resetsAt : 0;
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(NOTICE_FILE, JSON.stringify(seen) + '\n');
+    writeJson(NOTICE_FILE, seen);
   } catch {
     /* a notice that cannot be recorded is a notice repeated, never a block */
   }
@@ -211,8 +242,7 @@ export function rearmNotice(key) {
   const seen = loadNotices();
   delete seen[key];
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(NOTICE_FILE, JSON.stringify(seen) + '\n');
+    writeJson(NOTICE_FILE, seen);
   } catch {
     /* nothing to undo */
   }
@@ -291,8 +321,7 @@ export function armResume(prev, rateLimits, config, now = Math.floor(Date.now() 
   if (!changed) return null;
 
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(RESUME_FILE, JSON.stringify(armed) + '\n');
+    writeJson(RESUME_FILE, armed);
   } catch {
     /* an announcement that cannot be recorded is one not made, never a block */
   }
@@ -335,8 +364,7 @@ export function disarmResume(key) {
   const armed = readJson(RESUME_FILE) || {};
   delete armed[key];
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(RESUME_FILE, JSON.stringify(armed) + '\n');
+    writeJson(RESUME_FILE, armed);
   } catch {
     /* nothing to undo */
   }
@@ -361,8 +389,7 @@ export function recordHistory(rateLimits, now = Math.floor(Date.now() / 1000)) {
   }
   if (Object.keys(entry).length === 1) return;
   const history = [...loadHistory().filter((e) => Number.isFinite(e?.ts) && e.ts <= now), entry].slice(-HISTORY_LIMIT);
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(history) + '\n');
+  writeJson(HISTORY_FILE, history);
 }
 
 // Every session renders its own statusline, and the payload it renders carries

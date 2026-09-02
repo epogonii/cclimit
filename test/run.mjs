@@ -1322,6 +1322,17 @@ check('a wrapper from before the lookup moved onto its own line still works', ()
   fs.rmSync(wrapper, { force: true });
 });
 
+// Every state file is written to a sibling and renamed into place, so a reader
+// in another session never sees a half-written one. The sibling must not be
+// left behind either way.
+check('a reading leaves no temporary files behind', () => {
+  feed(50, 50);
+  feedAgain(51, 50);
+  cli('config');
+  const leftovers = fs.readdirSync(STATE).filter((name) => name.endsWith('.tmp'));
+  eq(leftovers, [], 'temporary files in the state directory');
+});
+
 // --- where the window is heading -------------------------------------------
 
 check('status projects where the window lands at the current rate', () => {

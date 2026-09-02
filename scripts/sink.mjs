@@ -14,10 +14,9 @@
 import fs from 'node:fs';
 import process from 'node:process';
 import {
-  STATE_DIR,
-  LIMITS_FILE,
   loadConfig,
   loadLimits,
+  saveLimits,
   mergeLimits,
   evaluate,
   pendingNotice,
@@ -78,8 +77,7 @@ try {
   const breach = evaluate(rateLimits, config);
 
   if (rateLimits) {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(LIMITS_FILE, JSON.stringify({ rate_limits: rateLimits, ts: Math.floor(Date.now() / 1000) }) + '\n');
+    saveLimits(rateLimits);
     // The trail behind the last reading is what turns "you are at 90%" into
     // "the ceiling is twenty minutes away".
     recordHistory(rateLimits);

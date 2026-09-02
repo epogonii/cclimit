@@ -43,6 +43,7 @@ import {
   localTime,
   newerSelf,
   rearmNotice,
+  writeBreach,
 } from './lib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -379,12 +380,8 @@ function setDowngrade(valueRaw) {
 function refreshBreach(config) {
   const usage = currentUsage();
   const breach = usage ? evaluate(usage.rateLimits, config) : null;
-  if (breach) {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(path.join(STATE_DIR, 'breach.json'), JSON.stringify(breach) + '\n');
-  } else {
-    clearBreach();
-  }
+  if (breach) writeBreach(breach);
+  else clearBreach();
 }
 
 function go() {
