@@ -60,6 +60,12 @@ try {
   /* not our JSON — still pass it through below */
 }
 
+// A downstream command that never reads its stdin -- a statusline that prints
+// a fixed string, say -- closes the pipe, and the write below then fails with
+// EPIPE after the fact. That is not our problem to report: the reading still
+// gets recorded, and a stack trace on stderr every ten seconds helps nobody.
+process.stdout.on('error', () => {});
+
 if (!render) process.stdout.write(raw);
 
 try {
