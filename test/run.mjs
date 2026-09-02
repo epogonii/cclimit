@@ -1055,7 +1055,7 @@ check('gate.sh hands a real breach to the gate', () => {
 // exist as its own file, and each file has to forward to the same binary.
 check('every documented subcommand has a command file that forwards to it', () => {
   const dir = path.join(HERE, '..', 'commands');
-  const documented = ['status', 'go', 'on', 'off', 'action', '5h', '7d', 'install', 'uninstall'];
+  const documented = ['status', 'go', 'on', 'off', 'action', '5h', '7d', 'ceiling', 'notice', 'downgrade', 'alert', 'config', 'install', 'uninstall'];
   for (const name of documented) {
     const file = path.join(dir, `${name}.md`);
     if (!fs.existsSync(file)) throw new Error(`no command file for /cclimit ${name}`);

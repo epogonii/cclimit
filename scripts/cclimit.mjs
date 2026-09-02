@@ -10,6 +10,7 @@
 //   cclimit notice 5h 75        a heads-up before the line, said once per window
 //   cclimit action stop|ask|warn
 //   cclimit downgrade sonnet|haiku|off   run subagents cheaper instead of stopping
+//   cclimit alert bell|notify|off        how an interrupted tool call gets your attention
 //   cclimit config              every setting and the command that changes it
 //   cclimit go                  keep going until the window resets
 //   cclimit on | off
@@ -704,5 +705,5 @@ else
   die(
     `cclimit: don't know "${args.join(' ')}". Try: status | 5h <percent> | 7d <percent> | ` +
       `ceiling 5h <percent>|off | notice 5h <percent>|off | action stop|ask|warn | downgrade sonnet|haiku|off | ` +
-      `config | go | on | off | install | uninstall`
+      `alert bell|notify|off | config | go | on | off | install | uninstall`
   );

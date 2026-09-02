@@ -1,6 +1,6 @@
 ---
 description: Show or change where plan usage stops Claude Code
-argument-hint: "[<percent> | 5h <percent> | 7d <percent> | action stop|ask|warn | downgrade sonnet|haiku|off | config | go | on | off | install | uninstall]"
+argument-hint: "[<percent> | 5h <percent> | 7d <percent> | ceiling 5h|7d <percent>|off | notice 5h|7d <percent>|off | action stop|ask|warn | downgrade sonnet|haiku|off | alert bell|notify|off | config | go | on | off | install | uninstall]"
 allowed-tools: Bash(node:*)
 disable-model-invocation: true
 ---
