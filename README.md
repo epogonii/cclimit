@@ -74,6 +74,16 @@ call; it is a whole session's worth of them starting at once.
 ## Install
 
 ```
+/plugin marketplace add anthropics/claude-plugins-community
+/plugin install cclimit@claude-community
+/cclimit install
+```
+
+The community catalog syncs on its own schedule, so if the install says the
+plugin is not in it yet, use this repository's own marketplace instead. It
+carries the same plugin and the same versions:
+
+```
 /plugin marketplace add epogonii/cclimit
 /plugin install cclimit@cclimit
 /cclimit install
