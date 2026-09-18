@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0
+
+- `/cclimit reserve <points>` keeps a subagent launch from starting right
+  underneath the ceiling. A ceiling can only stop the work it is asked about,
+  and it is asked exactly twice: at a prompt, and before a tool call. A
+  subagent launch is one tool call to start and a whole session's worth of
+  spending afterwards, in a context no hook here can reach, and it keeps
+  spending after everything in this session has been stopped — which is how a
+  window with a 95% ceiling ends at 108% with several of them in the air. With
+  a reserve set, a `Task` or `Agent` call inside that band is refused: the
+  call, not the turn, so the work is done in this session instead, one tool
+  call at a time, which is the pace a ceiling can actually stop. Every other
+  tool call runs untouched. It is off unless you set it, does nothing without
+  a ceiling on the window, comes before the action and before `downgrade` —
+  a cheaper subagent is still a subagent — and `/cclimit go` does not lift it,
+  for the same reason it does not lift the ceiling. Launches issued together
+  in one turn all see the same reading, so size the reserve for the fan-out
+  you actually use.
+
 ## 0.5.10
 
 - A single reading with an impossible reset time no longer wins for good. The
