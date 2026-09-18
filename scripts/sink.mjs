@@ -20,6 +20,7 @@ import {
   mergeLimits,
   evaluate,
   pendingNotice,
+  pendingReserve,
   armResume,
   pendingResume,
   writeBreach,
@@ -97,14 +98,20 @@ try {
   // it once, and not after, so the hot path goes cold again straight away
   // rather than starting Node on every call between here and the line.
   //
-  // Order matters: a hold outranks a heads-up, and both outrank the news that
-  // some other window has reset. A resume that loses that contest is not
-  // queued — by the time the winner is settled, it is no longer news.
+  // Order matters: a hold outranks a heads-up, that outranks the room left in
+  // front of the ceiling, and all three outrank the news that some other window
+  // has reset. A loser is not queued — by the time the winner is settled, it is
+  // no longer news. The heads-up sits above the reserve because it is spent by
+  // being said once and the reserve is not: the next render hands the file
+  // straight back to the reserve, whereas a heads-up that lost its one chance
+  // would never be said at all.
   if (breach) writeBreach(breach);
   else {
     const notice = pendingNotice(rateLimits, config);
-    const resume = notice ? null : pendingResume(rateLimits, config);
-    if (notice || resume) writeBreach(notice || resume);
+    const reserve = notice ? null : pendingReserve(rateLimits, config);
+    const resume = notice || reserve ? null : pendingResume(rateLimits, config);
+    const pending = notice || reserve || resume;
+    if (pending) writeBreach(pending);
     else clearBreach();
   }
 

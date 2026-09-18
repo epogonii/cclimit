@@ -120,6 +120,7 @@ If you have no statusline, `install` adds a minimal one showing `5h 42% · 7d 11
 | `/cclimit 7d 90` | stop at 90% of the 7-day window |
 | `/cclimit ceiling 5h 99` | the number `/cclimit go` cannot lift; `off` removes it |
 | `/cclimit notice 5h 75` | say something at 75% without blocking anything; `off` removes it |
+| `/cclimit reserve 5` | keep subagent launches 5 points clear of the ceiling; `off` removes it |
 | `/cclimit go` | continue until the current window resets |
 | `/cclimit action stop\|ask\|warn` | what a crossing does; see below |
 | `/cclimit downgrade sonnet` | past the line, run subagents cheaper instead of stopping; `off` removes it |
@@ -344,6 +345,53 @@ nothing in the hook interface can change the model of the session itself. So the
 message says `/model sonnet` and leaves that key press to you. Subagents are
 where the fan-out spending is anyway; this is the part worth automating.
 
+## The room in front of the ceiling
+
+```
+/cclimit ceiling 5h 95     the ceiling
+/cclimit reserve 5         no subagent may start with less than 5 points in front of it
+/cclimit reserve off       back to launching right up to the ceiling (the default)
+```
+
+A ceiling stops work at a number, and it can only stop the work it is asked
+about. There are exactly two moments it gets asked: when you send a prompt, and
+before a tool call runs. A subagent is neither. It is one tool call to start and
+a whole session's worth of spending afterwards, in a context the gate never
+sees, and it keeps spending after everything in your session has been stopped.
+Eight of them running at once is how a 95% ceiling ends the window at 108%.
+
+So a reserve is room the launch has to leave. With `reserve 5` and a 95%
+ceiling, a launch at 89% is fine and one at 91% is refused:
+
+```
+cclimit: 5h usage is at 91% and your ceiling is 95% — 4% of room, less than the 5 points a
+subagent launch has to leave.
+Not started. One launch is a whole session's worth of tool calls, and they go on spending
+after everything here has been stopped. Window resets Aug 26, 14:20 (in 42m).
+
+The same work done in this session spends the same room one call at a time, which is the
+pace the ceiling can stop.
+```
+
+Only the launch is refused — the turn carries on. That is the point: the work
+is not cancelled, it is moved back into this session, where it spends the same
+room one tool call at a time and the ceiling gets a say before each one. Every
+other tool call passes untouched until a real line or ceiling is crossed.
+
+It needs a ceiling on that window and does nothing without one, since it is
+measured against that number and not against the line. `/cclimit go` does not
+lift it, for the same reason it does not lift the ceiling. Past the line it
+comes first, before the action and before `downgrade`: a cheaper subagent is
+still a subagent, and a whole session of them still lands on the ceiling.
+
+Off unless you set it, because it refuses something that used to be allowed.
+Five points is a reasonable start; raise it if your work fans out widely.
+
+One thing it cannot catch: several launches issued in the same turn all see the
+same reading, so `reserve 5` at 89% lets a batch of them through together. The
+reserve is a floor under a launch, not a budget across a batch — size it for the
+fan-out you actually use.
+
 ## Where the line should sit
 
 Defaults are 85% of the 5-hour window and 90% of the 7-day one. The 5-hour window
@@ -362,6 +410,7 @@ your line cost money, so set them lower than feels necessary.
   "thresholds": { "five_hour": 85, "seven_day": 90 },
   "ceilings": { "five_hour": null, "seven_day": null },
   "notices": { "five_hour": null, "seven_day": null },
+  "reserve": null,
   "downgrade": null,
   "alert": "bell",
   "snoozeUntil": null,

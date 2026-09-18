@@ -9,6 +9,7 @@
 //   cclimit ceiling 5h 99       the number /cclimit go cannot lift
 //   cclimit notice 5h 75        a heads-up before the line, said once per window
 //   cclimit action stop|ask|warn
+//   cclimit reserve 5          room a subagent launch has to leave in front of the ceiling
 //   cclimit downgrade sonnet|haiku|off   run subagents cheaper instead of stopping
 //   cclimit alert bell|notify|off        how an interrupted tool call gets your attention
 //   cclimit config              every setting and the command that changes it
@@ -39,6 +40,7 @@ import {
   DOWNGRADE_MODELS,
   clearBreach,
   evaluate,
+  pendingReserve,
   pct,
   untilReset,
   localTime,
@@ -197,6 +199,18 @@ function status() {
     lines.push(`Last reading is ${untilReset(now + (now - usage.ts))} old — the statusline may not be rendering.`);
   }
 
+  // A reserve holds one kind of call and lets everything else through, so it is
+  // reported as what it is rather than folded in with the two that hold
+  // everything.
+  if (breach?.kind === 'reserve') {
+    lines.push('');
+    lines.push(
+      `Currently holding subagent launches: ${breach.label} at ${pct(breach.used_percentage)}, ` +
+        `less than ${config.reserve} points short of your ceiling of ${breach.threshold}%.`
+    );
+    lines.push('Everything else runs. /cclimit reserve off lets subagents launch up to the ceiling.');
+  }
+
   // Only a line and a ceiling hold anything. A heads-up and a reset notice ride
   // in the same file, and reporting either of them here would claim a block
   // that is not happening.
@@ -274,9 +288,53 @@ function setCeiling(key, valueRaw) {
   config.ceilings[key] = value;
   saveConfig(config);
   refreshBreach(config);
+  // A ceiling on its own is still reached from below by work that cannot be
+  // stopped once it has started, and a subagent launch is the one call that
+  // starts a whole session of it. Said here because this is the moment someone
+  // is thinking about the number it guards.
+  const held =
+    typeof config.reserve === 'number'
+      ? ` Subagent launches stop ${config.reserve} points short of it.`
+      : ` /cclimit reserve <points> keeps subagent launches from starting right underneath it.`;
   out(
     `cclimit: ${WINDOWS[key].label} ceiling set to ${value}%. Work continues past ${line}% once you say so, ` +
-      `and stops at ${value}% whatever you say.`
+      `and stops at ${value}% whatever you say.${held}`
+  );
+}
+
+// The room a subagent launch has to leave in front of the ceiling. It is the
+// only setting here measured in points rather than in percent, because it is not
+// a place in the window — it is how far from the wall a launch has to stay, and
+// the wall moves whenever the ceiling does.
+function setReserve(valueRaw) {
+  const config = loadConfig();
+  const token = String(valueRaw ?? '').toLowerCase();
+
+  if (['off', 'none', 'no', 'remove', '0'].includes(token)) {
+    config.reserve = null;
+    saveConfig(config);
+    refreshBreach(config);
+    out('cclimit: reserve off. Subagents launch right up to the ceiling again.');
+    return;
+  }
+
+  const value = Number(valueRaw);
+  if (!Number.isFinite(value) || value <= 0 || value > 50) {
+    die(`Reserve must be a number of percentage points between 1 and 50, or "off", got: ${valueRaw}`);
+  }
+  config.reserve = Math.round(value);
+  saveConfig(config);
+  refreshBreach(config);
+
+  const caps = Object.entries(WINDOWS)
+    .filter(([key]) => typeof config.ceilings[key] === 'number')
+    .map(([key, meta]) => `${meta.label} ${config.ceilings[key]}%`);
+  out(
+    caps.length
+      ? `cclimit: reserve set to ${config.reserve} points. A subagent launch now needs that much room in front ` +
+          `of your ceiling (${caps.join(', ')}) — everything else runs exactly as before.`
+      : `cclimit: reserve set to ${config.reserve} points. It holds subagent launches back from a ceiling and ` +
+          `there is no ceiling yet, so nothing is held: /cclimit ceiling 5h <percent> gives it something to guard.`
   );
 }
 
@@ -379,10 +437,16 @@ function setDowngrade(valueRaw) {
   );
 }
 
+// Rewritten after every setting that changes what the gates do, so a new number
+// lands on the next tool call rather than on the next statusline render. The
+// reserve is rebuilt here too: it is the one thing in that file that is not
+// spent by being said, and clearing it would leave subagents launching freely
+// until a render put it back.
 function refreshBreach(config) {
   const usage = currentUsage();
   const breach = usage ? evaluate(usage.rateLimits, config) : null;
-  if (breach) writeBreach(breach);
+  const guard = !breach && usage ? pendingReserve(usage.rateLimits, config) : null;
+  if (breach || guard) writeBreach(breach || guard);
   else clearBreach();
 }
 
@@ -408,7 +472,10 @@ function go() {
   }
   config.snoozeUntil = until ?? now + 3600;
   saveConfig(config);
-  clearBreach();
+  // A snooze is an answer to the line. It is not an answer to the ceiling, and
+  // so not to the room in front of it either — which is rebuilt rather than
+  // cleared, because `go` is exactly the moment a run of subagents gets started.
+  refreshBreach(config);
   // What a snooze does not cover is the part worth repeating: someone reaching
   // for `go` is reaching for "carry on", and needs to know where that ends.
   const caps = Object.entries(WINDOWS)
@@ -635,6 +702,11 @@ function configTable() {
     ['Enabled', String(config.enabled), '/cclimit on \u00b7 /cclimit off'],
     ['At the line', config.action, '/cclimit action stop|ask|warn'],
     ['Downgrade instead of stopping', config.downgrade || 'off', `/cclimit downgrade ${DOWNGRADE_MODELS.join('|')}|off`],
+    [
+      'Subagent reserve',
+      typeof config.reserve === 'number' ? `${config.reserve} points` : 'off',
+      '/cclimit reserve <points>|off',
+    ],
     ['Alert on a stop', config.alert || 'off', '/cclimit alert bell|notify|off'],
     [null, null, null],
   ];
@@ -693,6 +765,7 @@ else if (first === 'uninstall') uninstall();
 else if (first === 'action') setAction(String(second || '').toLowerCase());
 else if (first === 'ceiling' && windowKey(second)) setCeiling(windowKey(second), args[2]);
 else if (first === 'notice' && windowKey(second)) setNotice(windowKey(second), args[2]);
+else if (first === 'reserve') setReserve(args[1]);
 else if (first === 'downgrade') setDowngrade(args[1]);
 else if (first === 'alert') setAlert(args[1]);
 else if (first === 'config' && second === 'path') out(CONFIG_FILE);
@@ -704,6 +777,7 @@ else if (Number.isFinite(Number(first))) setThreshold('five_hour', first);
 else
   die(
     `cclimit: don't know "${args.join(' ')}". Try: status | 5h <percent> | 7d <percent> | ` +
-      `ceiling 5h <percent>|off | notice 5h <percent>|off | action stop|ask|warn | downgrade sonnet|haiku|off | ` +
+      `ceiling 5h <percent>|off | notice 5h <percent>|off | reserve <points>|off | action stop|ask|warn | ` +
+      `downgrade sonnet|haiku|off | ` +
       `alert bell|notify|off | config | go | on | off | install | uninstall`
   );

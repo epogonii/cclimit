@@ -1,11 +1,11 @@
 ---
-description: Show or change where plan usage stops Claude Code
-argument-hint: "[<percent> | 5h <percent> | 7d <percent> | ceiling 5h|7d <percent>|off | notice 5h|7d <percent>|off | reserve <points>|off | action stop|ask|warn | downgrade sonnet|haiku|off | alert bell|notify|off | config | go | on | off | install | uninstall]"
+description: Keep subagent launches from starting right underneath the ceiling
+argument-hint: "<points|off>"
 allowed-tools: Bash(node:*)
 disable-model-invocation: true
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/cclimit.mjs" $ARGUMENTS`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/cclimit.mjs" reserve $ARGUMENTS`
 
 The command above already did the work and its output is the answer. Reply
 with that text exactly as printed — same words, same line breaks, no code

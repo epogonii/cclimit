@@ -67,6 +67,14 @@ export const DEFAULTS = {
   // stopping there. Off by default: quietly changing which model does the work
   // is a bigger thing to do unasked than declining to do it at all.
   downgrade: null,
+  // How much room in front of the ceiling a subagent launch has to leave, in
+  // percentage points. One launch is not one tool call; it is a whole session's
+  // worth of them, running in parallel and going on spending after everything
+  // in this session has been stopped. So the ceiling can be blown straight
+  // through by work that was already in the air when it fired. Off by default:
+  // it refuses something that used to be allowed, and nothing here does that
+  // unasked.
+  reserve: null,
   // How to make an interruption noticeable when nobody is watching the
   // terminal. `bell` rings it, `notify` adds a desktop notification where the
   // terminal understands one, `off` says nothing. On by default at `bell`,
@@ -237,6 +245,17 @@ export function evaluate(rateLimits, config, now = nowSeconds()) {
   return worst;
 }
 
+// Whether a subagent launch is too close to the ceiling to be started. One
+// window's worth of the question pendingReserve asks of every window.
+function reserveHeld(used, window, config) {
+  const reserve = config?.reserve;
+  const ceiling = config?.ceilings?.[window];
+  if (typeof reserve !== 'number' || reserve <= 0) return false;
+  if (typeof ceiling !== 'number') return false;
+  if (typeof used !== 'number') return false;
+  return used + reserve >= ceiling;
+}
+
 // Which windows have already had their heads-up, keyed by the reset time of the
 // window it was said for. A new window carries a new reset time, which re-arms
 // the notice without anything having to expire or be cleaned up.
@@ -301,6 +320,45 @@ export function pendingNotice(rateLimits, config, now = nowSeconds()) {
       ts: now,
     };
     if (!worst || candidate.used_percentage - notice > worst.used_percentage - worst.threshold) worst = candidate;
+  }
+  return worst;
+}
+
+// The room left in front of the ceiling, which is not a breach either: usage is
+// still short of the number that stops everything, and everything short of a
+// subagent launch carries on. It travels in the breach file for the same reason
+// the heads-up does — that file is what wakes the gate at all — but unlike the
+// heads-up it is not spent by being said. It stands until usage leaves the band
+// or the ceiling itself fires, because every launch in between has to meet it.
+export function pendingReserve(rateLimits, config, now = nowSeconds()) {
+  if (!rateLimits || typeof rateLimits !== 'object') return null;
+  if (!config.enabled) return null;
+
+  let worst = null;
+  for (const key of Object.keys(WINDOWS)) {
+    const win = rateLimits[key];
+    if (!win || typeof win.used_percentage !== 'number') continue;
+
+    const ceiling = config.ceilings?.[key];
+    if (typeof ceiling !== 'number') continue;
+    // At or past the ceiling, the ceiling has its own thing to say and the
+    // collector has already written it.
+    if (win.used_percentage >= ceiling) continue;
+    if (!reserveHeld(win.used_percentage, key, config)) continue;
+
+    const candidate = {
+      window: key,
+      label: WINDOWS[key].label,
+      used_percentage: win.used_percentage,
+      kind: 'reserve',
+      threshold: ceiling,
+      reserve: config.reserve,
+      resets_at: Number.isFinite(win.resets_at) ? win.resets_at : null,
+      ts: now,
+    };
+    // Between two windows, the one with less room in front of it wins: that is
+    // the one a launch would run out of first.
+    if (!worst || ceiling - candidate.used_percentage < worst.threshold - worst.used_percentage) worst = candidate;
   }
   return worst;
 }
@@ -830,6 +888,32 @@ export function breachMessage(breach, config, { tool, headroom } = {}) {
       ['/cclimit off', 'turn cclimit off'],
     ]) +
     again
+  );
+}
+
+// Said when a subagent launch is refused for being too close to the ceiling.
+// Nothing is stopped but the launch, so the sentence leads with the way forward
+// that costs no setting change: the same work, done here, one tool call at a
+// time — which is the shape the ceiling can actually stop. The options below it
+// are the two ways to stop being asked, and neither is a number to nudge: an
+// offer to reserve a little less is the same ratchet as an offer to raise a
+// ceiling by one.
+export function reserveMessage(breach, config) {
+  const ceiling = config.ceilings?.[breach.window];
+  const at = localTime(breach.resets_at);
+  const reset = at ? ` Window resets ${at} (in ${untilReset(breach.resets_at)}).` : '';
+  const room = Math.max(0, ceiling - breach.used_percentage);
+  return (
+    `cclimit: ${breach.label} usage is at ${pct(breach.used_percentage)} and your ceiling is ${ceiling}% — ` +
+    `${pct(room)} of room, less than the ${config.reserve} points a subagent launch has to leave.\n` +
+    `Not started. One launch is a whole session's worth of tool calls, and they go on spending ` +
+    `after everything here has been stopped.${reset}\n\n` +
+    `The same work done in this session spends the same room one call at a time, which is the pace ` +
+    `the ceiling can stop.\n\n` +
+    options([
+      ['/cclimit reserve off', 'launch subagents right up to the ceiling'],
+      [`/cclimit ceiling ${breach.label} off`, 'remove the ceiling'],
+    ])
   );
 }
 

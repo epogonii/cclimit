@@ -1085,7 +1085,7 @@ check('gate.sh hands a real breach to the gate', () => {
 // exist as its own file, and each file has to forward to the same binary.
 check('every documented subcommand has a command file that forwards to it', () => {
   const dir = path.join(HERE, '..', 'commands');
-  const documented = ['status', 'go', 'on', 'off', 'action', '5h', '7d', 'ceiling', 'notice', 'downgrade', 'alert', 'config', 'install', 'uninstall'];
+  const documented = ['status', 'go', 'on', 'off', 'action', '5h', '7d', 'ceiling', 'notice', 'reserve', 'downgrade', 'alert', 'config', 'install', 'uninstall'];
   for (const name of documented) {
     const file = path.join(dir, `${name}.md`);
     if (!fs.existsSync(file)) throw new Error(`no command file for /cclimit ${name}`);
@@ -1728,14 +1728,239 @@ check('downgrade takes a model it knows or nothing at all', () => {
   eq(JSON.parse(cli('status', '--json')).config.downgrade, null, 'downgrade');
 });
 
+// --- the room in front of the ceiling ---------------------------------------
+//
+// A subagent is the one call a hook cannot follow: it starts a whole session of
+// spending that carries on after everything here has been stopped. So it is the
+// one call that has to leave room in front of the ceiling.
+
+function reserveOff() {
+  cli('reserve', 'off');
+  cli('downgrade', 'off');
+  // Before the lines move: a notice left behind by an earlier check sits above
+  // the line resetNotices puts back, and the command refuses that arrangement.
+  cli('notice', '5h', 'off');
+  cli('notice', '7d', 'off');
+  ceilingOff();
+  resetNotices();
+  fs.rmSync(path.join(STATE, 'limits.json'), { force: true });
+}
+
+// Line at 93, ceiling at 95, reserve 5: usage from 90 up is inside the band and
+// still short of both numbers that hold anything.
+function band() {
+  reserveOff();
+  cli('5h', '93');
+  cli('ceiling', '5h', '95');
+  cli('reserve', '5');
+}
+
+check('no reserve is kept until one is asked for', () => {
+  reserveOff();
+  eq(JSON.parse(cli('status', '--json')).config.reserve, null, 'reserve');
+});
+
+check('usage inside the band wakes the gate without crossing anything', () => {
+  band();
+  feed(91, 10);
+  const b = breachFile();
+  eq(b?.kind, 'reserve', 'kind');
+  eq(b?.window, 'five_hour', 'window');
+  eq(b?.threshold, 95, 'threshold');
+  eq(b?.reserve, 5, 'reserve');
+});
+
+check('the band does nothing without a ceiling to measure it against', () => {
+  reserveOff();
+  cli('5h', '93');
+  cli('reserve', '5');
+  feed(91, 10);
+  eq(breachFile(), null, 'breach');
+});
+
+check('the ceiling itself takes the file back', () => {
+  band();
+  feed(96, 10);
+  eq(breachFile()?.kind, 'ceiling', 'kind');
+});
+
+check('usage back under the band leaves nothing armed', () => {
+  band();
+  feed(91, 10);
+  feed(40, 10);
+  eq(breachFile(), null, 'breach');
+});
+
+check('a heads-up gets the first render and the room in front the next', () => {
+  band();
+  cli('notice', '5h', '85');
+  feed(91, 10);
+  eq(breachFile()?.kind, 'notice', 'first render');
+  const said = gate('UserPromptSubmit', { prompt: 'carry on' });
+  if (!said?.systemMessage) throw new Error(`no heads-up: ${JSON.stringify(said)}`);
+  feedAgain(91.5, 10);
+  eq(breachFile()?.kind, 'reserve', 'second render');
+  reserveOff();
+});
+
+check('a launch is refused without eating the heads-up waiting behind it', () => {
+  band();
+  cli('notice', '5h', '85');
+  feed(91, 10);
+  eq(breachFile()?.kind, 'notice', 'kind');
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  eq(breachFile()?.kind, 'notice', 'the heads-up still waiting');
+  reserveOff();
+});
+
+check('the line still takes effect while a launch is being held', () => {
+  band();
+  feed(91, 10);
+  eq(breachFile()?.kind, 'reserve', 'kind');
+  // No statusline render in between: the gate reads the config, not just the
+  // file it was woken by.
+  cli('5h', '90');
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  eq(res?.continue, false, 'continue');
+  reserveOff();
+});
+
+check('a launch leaves room in front of every ceiling, not just the loudest window', () => {
+  reserveOff();
+  cli('5h', '93');
+  cli('ceiling', '5h', '95');
+  cli('reserve', '5');
+  cli('action', 'warn');
+  // The 7-day window is the one past its line, so it is the one in the breach
+  // file — and it is the 5-hour ceiling the launch would run into.
+  feed(91, 91);
+  eq(breachFile()?.window, 'seven_day', 'window');
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  reserveOff();
+});
+
+check('an ordinary tool call inside the band runs untouched', () => {
+  band();
+  feed(91, 10);
+  eq(gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null, 'response');
+  // Unlike a heads-up, the hold is not spent by being met once: every launch
+  // between here and the ceiling has to answer for itself.
+  eq(breachFile()?.kind, 'reserve', 'still armed');
+});
+
+check('a prompt inside the band is not blocked', () => {
+  band();
+  feed(91, 10);
+  eq(gate('UserPromptSubmit', { prompt: 'keep going' }), null, 'response');
+});
+
+check('a subagent launch inside the band is refused', () => {
+  band();
+  feed(91, 10);
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'go and read the tests' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  const why = res.hookSpecificOutput.permissionDecisionReason;
+  if (!/ceiling is 95%/.test(why)) throw new Error(`no ceiling in the refusal: ${why}`);
+  if (res.continue === false) throw new Error('a held launch ended the turn');
+  eq(breachFile()?.kind, 'reserve', 'still armed');
+});
+
+check('the other name a subagent launch goes by is refused too', () => {
+  band();
+  feed(91, 10);
+  const res = gate('PreToolUse', { tool_name: 'Agent', tool_input: { prompt: 'x' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+});
+
+check('a held launch rings once a window, not once a launch', () => {
+  band();
+  feed(91, 10);
+  const first = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } }, NO_TERMINAL);
+  if (!first.terminalSequence) throw new Error('the first refusal said nothing to the terminal');
+  const second = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } }, NO_TERMINAL);
+  eq(second.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  if (second.terminalSequence) throw new Error('the second refusal rang again');
+});
+
+check('a stale reading holds no launch back', () => {
+  band();
+  feed(91, 10);
+  const b = breachFile();
+  fs.writeFileSync(path.join(STATE, 'breach.json'), JSON.stringify({ ...b, ts: NOW - 600 }));
+  eq(gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } }), null, 'response');
+});
+
+check('a cheaper subagent past the line is still too close to the ceiling', () => {
+  band();
+  cli('downgrade', 'sonnet');
+  feed(93.5, 10);
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  if (res.hookSpecificOutput.updatedInput) throw new Error('a held launch was rewritten instead of refused');
+  reserveOff();
+});
+
+check('warning about the line does not let a launch through it', () => {
+  band();
+  cli('action', 'warn');
+  feed(93.5, 10);
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  reserveOff();
+});
+
+check('an ordinary tool call past the line is still only warned about', () => {
+  band();
+  cli('action', 'warn');
+  feed(93.5, 10);
+  const res = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  if (res?.hookSpecificOutput?.permissionDecision) throw new Error(`the reserve held an ordinary call: ${JSON.stringify(res)}`);
+  if (!res?.systemMessage) throw new Error(`no warning: ${JSON.stringify(res)}`);
+  reserveOff();
+});
+
+check('go answers the line and leaves the room in front of the ceiling alone', () => {
+  band();
+  feed(91, 10);
+  cli('go');
+  eq(breachFile()?.kind, 'reserve', 'kind');
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  reserveOff();
+});
+
+check('the reserve is a number of points or nothing at all', () => {
+  reserveOff();
+  for (const bad of ['99', '-3', 'lots']) {
+    const res = run('cclimit.mjs', ['reserve', bad]);
+    if (res.status === 0) throw new Error(`accepted a reserve of ${bad}`);
+  }
+  eq(JSON.parse(cli('status', '--json')).config.reserve, null, 'reserve');
+  cli('reserve', '5');
+  eq(JSON.parse(cli('status', '--json')).config.reserve, 5, 'reserve');
+  cli('reserve', 'off');
+  eq(JSON.parse(cli('status', '--json')).config.reserve, null, 'reserve');
+});
+
+check('status says what is being held and what is not', () => {
+  band();
+  feed(91, 10);
+  const text = cli('status');
+  if (!/holding subagent launches/.test(text)) throw new Error(`status hides the hold: ${text}`);
+  if (!/Everything else runs/.test(text)) throw new Error(`status overstates the hold: ${text}`);
+  reserveOff();
+});
+
 // --- every setting on one screen --------------------------------------------
 
 check('the config screen names every knob and how to turn it', () => {
   const text = cli('config');
-  for (const row of ['Enabled', 'At the line', 'Downgrade instead of stopping', 'Line (5h)', 'Ceiling (7d)', 'Heads-up (5h)', 'Snoozed until']) {
+  for (const row of ['Enabled', 'At the line', 'Downgrade instead of stopping', 'Subagent reserve', 'Line (5h)', 'Ceiling (7d)', 'Heads-up (5h)', 'Snoozed until']) {
     if (!text.includes(row)) throw new Error(`no "${row}" row: ${text}`);
   }
-  for (const how of ['/cclimit action', '/cclimit ceiling 7d', '/cclimit notice 5h', '/cclimit downgrade']) {
+  for (const how of ['/cclimit action', '/cclimit ceiling 7d', '/cclimit notice 5h', '/cclimit downgrade', '/cclimit reserve']) {
     if (!text.includes(how)) throw new Error(`no command for a row: ${how}`);
   }
 });

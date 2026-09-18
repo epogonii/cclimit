@@ -17,11 +17,14 @@ import {
   markNoticed,
   disarmResume,
   cheaperModel,
+  loadLimits,
+  pendingReserve,
   burnRate,
   minutesTo,
   alertSequence,
   breachMessage,
   noticeMessage,
+  reserveMessage,
   resumeMessage,
   downgradeMessage,
   pct,
@@ -51,15 +54,36 @@ function emit(response) {
 //
 // A stop ends the turn and an ask waits for an answer, so neither can repeat
 // faster than the user can act on it. Only warn needs the damper.
-function firstThisWindow(key) {
-  if (loadNotices()[key] === (breach.resets_at ?? 0)) return false;
-  markNoticed(key, breach.resets_at);
+function firstThisWindow(key, resetsAt = breach.resets_at) {
+  if (loadNotices()[key] === (resetsAt ?? 0)) return false;
+  markNoticed(key, resetsAt);
   return true;
 }
 
-function alerted(response, what) {
-  const seq = alertSequence(config, `${breach.label} usage ${pct(breach.used_percentage)} \u2014 ${what}`);
+function alerted(response, what, subject = breach) {
+  const seq = alertSequence(config, `${subject.label} usage ${pct(subject.used_percentage)} \u2014 ${what}`);
   return seq ? { ...response, terminalSequence: seq } : response;
+}
+
+// Refusing one tool call, rather than ending the turn. A launch held back for
+// being too near the ceiling is not the ceiling: there is room left, and the
+// work can have it — one call at a time, in this session, where the ceiling
+// stops it the moment it runs out. A denial says so to the model, which then
+// does exactly that; `continue: false` would end the turn instead and leave the
+// work undone in front of a user who is not at the desk. The bell is spent once
+// per window for the same reason the warning's is: the refusal repeats on every
+// launch, and ringing every time is the interruption this plugin exists to
+// avoid.
+function denyFanOut(held) {
+  const response = {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reserveMessage(held, config),
+    },
+  };
+  const rang = firstThisWindow(`alert:${held.window}`, held.resets_at);
+  emit(rang ? alerted(response, 'a subagent launch was held back.', held) : response);
 }
 
 // Blocking a prompt otherwise echoes the prompt back under the reason, which
@@ -103,6 +127,28 @@ if (!breach || typeof breach.used_percentage !== 'number') allow();
 // kind of thing it turned out to be.
 const age = now - (breach.ts ?? 0);
 if (age > (config.maxStaleSeconds ?? 120)) allow();
+
+const tool = event === 'PreToolUse' ? payload.tool_name : null;
+// A subagent launch is not one tool call, it is a whole session's worth of
+// them, so it gets said out loud rather than folded into the generic line.
+const isFanOut = tool === 'Task' || tool === 'Agent';
+
+// The room in front of the ceiling, settled before anything else here and read
+// from the last reading rather than from the breach file. The file carries one
+// window — whichever had the most to say — and a launch has to leave room in
+// front of every ceiling, not only that one.
+//
+// Nothing is cleared on the way out: unlike a heads-up this is not spent by
+// being said, and every launch between here and the ceiling has to meet it.
+// That includes the ones after `/cclimit go`, because a snooze answers the line
+// and this is measured against the number a snooze does not reach. A launch at
+// or past the ceiling is not held here at all — the ceiling stops the turn
+// outright, which is more than a refused call, and pendingReserve leaves that
+// window alone for exactly that reason.
+if (isFanOut) {
+  const held = pendingReserve(loadLimits()?.rate_limits, config, now);
+  if (held) denyFanOut(held);
+}
 
 // The breach file was written against whatever the numbers were at the time.
 // Re-check against the config as it is now, so `/cclimit 5h 95` takes effect on
@@ -167,11 +213,6 @@ if (!kind) allow();
 // which is exactly what this plugin exists to prevent — and matching the word
 // loosely would disarm the gate for anyone working in a directory of that name.
 if (event === 'UserPromptSubmit' && /(^|\s)\/cclimit(\s|:|$)/i.test(payload.prompt || '')) allow();
-
-const tool = event === 'PreToolUse' ? payload.tool_name : null;
-// A subagent launch is not one tool call, it is a whole session's worth of
-// them, so it gets said out loud rather than folded into the generic line.
-const isFanOut = tool === 'Task' || tool === 'Agent';
 
 // Downgrading answers the line and only the line. A ceiling is the number that
 // means stop, and moving the work onto a cheaper model is still doing the work.
