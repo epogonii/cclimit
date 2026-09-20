@@ -12,12 +12,14 @@ import {
   loadConfig,
   loadBreach,
   clearBreach,
+  writeBreach,
   loadHistory,
   loadNotices,
   markNoticed,
   disarmResume,
   cheaperModel,
   loadLimits,
+  evaluate,
   pendingReserve,
   burnRate,
   minutesTo,
@@ -82,8 +84,21 @@ function denyFanOut(held) {
       permissionDecisionReason: reserveMessage(held, config),
     },
   };
-  const rang = firstThisWindow(`alert:${held.window}`, held.resets_at);
+  const rang = firstThisWindow(`reserve:${held.window}`, held.resets_at);
   emit(rang ? alerted(response, 'a subagent launch was held back.', held) : response);
+}
+
+// A heads-up and a reset announcement are spent by being said, and the file
+// they rode in on goes with them. But that file is also the only thing that
+// wakes this script at all: gate.sh exits before Node when it is gone, so
+// dropping it would leave every launch between here and the next statusline
+// render unheld. What is still true is written back in its place, by the same
+// order of precedence the collector uses.
+function settleAfterSpending() {
+  const limits = loadLimits()?.rate_limits;
+  const next = evaluate(limits, config, now) || pendingReserve(limits, config, now);
+  if (next) writeBreach(next);
+  else clearBreach();
 }
 
 // Blocking a prompt otherwise echoes the prompt back under the reason, which
@@ -130,8 +145,17 @@ if (age > (config.maxStaleSeconds ?? 120)) allow();
 
 const tool = event === 'PreToolUse' ? payload.tool_name : null;
 // A subagent launch is not one tool call, it is a whole session's worth of
-// them, so it gets said out loud rather than folded into the generic line.
-const isFanOut = tool === 'Task' || tool === 'Agent';
+// them, so it gets said out loud rather than folded into the generic line. A
+// Workflow is that same thing several times over — one call whose script fans
+// out into as many agents as it asks for, none of which come back through here
+// — so it is held to the same rule.
+const isFanOut = tool === 'Task' || tool === 'Agent' || tool === 'Workflow';
+
+// Of those, the two that carry the model in the tool input are the two a
+// downgrade can rewrite. A Workflow carries a script instead: there is no model
+// to make cheaper, and writing one in would be inventing a field the tool never
+// reads.
+const carriesModel = tool === 'Task' || tool === 'Agent';
 
 // The room in front of the ceiling, settled before anything else here and read
 // from the last reading rather than from the breach file. The file carries one
@@ -171,7 +195,7 @@ if (breach.kind === 'notice') {
   if (typeof line === 'number' && breach.used_percentage >= line) allow();
 
   markNoticed(breach.window, breach.resets_at);
-  clearBreach();
+  settleAfterSpending();
 
   const target = typeof line === 'number' ? line : typeof ceiling === 'number' ? ceiling : null;
   const rate = burnRate(loadHistory(), breach.window, now);
@@ -187,7 +211,7 @@ if (breach.kind === 'notice') {
 // decides nothing, and it is worth saying exactly once.
 if (breach.kind === 'resume') {
   disarmResume(breach.window);
-  clearBreach();
+  settleAfterSpending();
   emit({ systemMessage: resumeMessage(breach) });
 }
 
@@ -221,7 +245,7 @@ if (kind === 'line' && typeof config.downgrade === 'string') {
 
   // A subagent is the one thing a hook can actually move: its model is part of
   // the tool input, and the input is the one field PreToolUse can rewrite.
-  if (event === 'PreToolUse' && isFanOut) {
+  if (event === 'PreToolUse' && carriesModel) {
     const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {};
     const target = cheaperModel(input.model, model);
     if (!target) allow();

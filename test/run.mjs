@@ -1931,6 +1931,71 @@ check('go answers the line and leaves the room in front of the ceiling alone', (
   reserveOff();
 });
 
+check('a workflow launch has to leave the same room a subagent does', () => {
+  band();
+  feed(91, 10);
+  const res = gate('PreToolUse', { tool_name: 'Workflow', tool_input: { script: 'export const meta = {};' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  reserveOff();
+});
+
+check('a downgrade moves a subagent and invents nothing for a workflow', () => {
+  band();
+  cli('reserve', 'off');
+  cli('downgrade', 'sonnet');
+  feed(93.5, 10);
+  const sub = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x', model: 'opus' } });
+  if (!sub?.hookSpecificOutput?.updatedInput?.model) throw new Error(`the subagent was not moved: ${JSON.stringify(sub)}`);
+  const flow = gate('PreToolUse', { tool_name: 'Workflow', tool_input: { script: 'x' } });
+  if (flow?.hookSpecificOutput?.updatedInput) throw new Error(`a workflow was given a model it never reads: ${JSON.stringify(flow)}`);
+  reserveOff();
+});
+
+check('saying a heads-up does not hand back the room in front of the ceiling', () => {
+  band();
+  cli('notice', '5h', '85');
+  feed(91, 10);
+  eq(breachFile()?.kind, 'notice', 'kind');
+  const said = gate('UserPromptSubmit', { prompt: 'carry on' });
+  if (!said?.systemMessage) throw new Error(`no heads-up: ${JSON.stringify(said)}`);
+  eq(breachFile()?.kind, 'reserve', 'file after the heads-up');
+  const res = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } });
+  eq(res?.hookSpecificOutput?.permissionDecision, 'deny', 'decision');
+  reserveOff();
+});
+
+check('a held launch does not spend the bell the line still needs', () => {
+  band();
+  cli('action', 'warn');
+  feed(91, 10);
+  const launch = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } }, NO_TERMINAL);
+  if (!launch.terminalSequence) throw new Error('the refusal said nothing to the terminal');
+  feedAgain(93.5, 10);
+  const past = gate('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }, NO_TERMINAL);
+  if (!past.terminalSequence) throw new Error('crossing the line rang nothing');
+  reserveOff();
+});
+
+check('status says launches are held even when the line has its own thing to say', () => {
+  band();
+  feed(93.5, 10);
+  eq(breachFile()?.kind, 'line', 'kind');
+  const text = cli('status');
+  if (!/holding subagent launches/.test(text)) throw new Error(`status said nothing about the hold: ${text}`);
+  reserveOff();
+});
+
+check('the refusal claims no less room than there is', () => {
+  band();
+  feed(90, 10);
+  const why = gate('PreToolUse', { tool_name: 'Task', tool_input: { prompt: 'x' } })?.hookSpecificOutput
+    ?.permissionDecisionReason;
+  if (!why) throw new Error('nothing was said');
+  if (/less than the 5 points/.test(why)) throw new Error(`exactly five points called less than five: ${why}`);
+  if (!/no more than the 5 points/.test(why)) throw new Error(`no room left in the sentence: ${why}`);
+  reserveOff();
+});
+
 check('the reserve is a number of points or nothing at all', () => {
   reserveOff();
   for (const bad of ['99', '-3', 'lots']) {

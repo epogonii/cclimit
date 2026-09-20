@@ -349,7 +349,7 @@ where the fan-out spending is anyway; this is the part worth automating.
 
 ```
 /cclimit ceiling 5h 95     the ceiling
-/cclimit reserve 5         no subagent may start with less than 5 points in front of it
+/cclimit reserve 5         no subagent may start on the last 5 points in front of the ceiling
 /cclimit reserve off       back to launching right up to the ceiling (the default)
 ```
 
@@ -364,8 +364,8 @@ So a reserve is room the launch has to leave. With `reserve 5` and a 95%
 ceiling, a launch at 89% is fine and one at 91% is refused:
 
 ```
-cclimit: 5h usage is at 91% and your ceiling is 95% — 4% of room, less than the 5 points a
-subagent launch has to leave.
+cclimit: 5h usage is at 91% and your ceiling is 95% — 4% of room, no more than the 5 points
+a subagent launch has to leave.
 Not started. One launch is a whole session's worth of tool calls, and they go on spending
 after everything here has been stopped. Window resets Aug 26, 14:20 (in 42m).
 
@@ -377,6 +377,10 @@ Only the launch is refused — the turn carries on. That is the point: the work
 is not cancelled, it is moved back into this session, where it spends the same
 room one tool call at a time and the ceiling gets a say before each one. Every
 other tool call passes untouched until a real line or ceiling is crossed.
+
+The calls it holds are `Task`, the `Agent` name for the same thing, and
+`Workflow`, whose script fans out into as many agents as it asks for. All three
+start work that never comes back past this gate.
 
 It needs a ceiling on that window and does nothing without one, since it is
 measured against that number and not against the line. `/cclimit go` does not

@@ -201,12 +201,16 @@ function status() {
 
   // A reserve holds one kind of call and lets everything else through, so it is
   // reported as what it is rather than folded in with the two that hold
-  // everything.
-  if (breach?.kind === 'reserve') {
+  // everything. It is worked out here rather than read off the breach file: the
+  // file carries one record, and past the line that record is the line — while
+  // the hold on subagent launches is still in force and still the reason one
+  // would be refused.
+  const held = usage ? pendingReserve(usage.rateLimits, config) : null;
+  if (held) {
     lines.push('');
     lines.push(
-      `Currently holding subagent launches: ${breach.label} at ${pct(breach.used_percentage)}, ` +
-        `less than ${config.reserve} points short of your ceiling of ${breach.threshold}%.`
+      `Currently holding subagent launches: ${held.label} at ${pct(held.used_percentage)}, ` +
+        `no more than ${config.reserve} points short of your ceiling of ${held.threshold}%.`
     );
     lines.push('Everything else runs. /cclimit reserve off lets subagents launch up to the ceiling.');
   }

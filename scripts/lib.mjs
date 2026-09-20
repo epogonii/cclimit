@@ -905,7 +905,7 @@ export function reserveMessage(breach, config) {
   const room = Math.max(0, ceiling - breach.used_percentage);
   return (
     `cclimit: ${breach.label} usage is at ${pct(breach.used_percentage)} and your ceiling is ${ceiling}% — ` +
-    `${pct(room)} of room, less than the ${config.reserve} points a subagent launch has to leave.\n` +
+    `${pct(room)} of room, no more than the ${config.reserve} points a subagent launch has to leave.\n` +
     `Not started. One launch is a whole session's worth of tool calls, and they go on spending ` +
     `after everything here has been stopped.${reset}\n\n` +
     `The same work done in this session spends the same room one call at a time, which is the pace ` +
