@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.6.1
+
+- A `Workflow` call is held by the reserve as well. It starts a script that
+  fans out into as many agents as it asks for, none of which come back past
+  this gate, so leaving it out made the reserve a floor under one shape of
+  launch and not the other. The `downgrade` rewrite is deliberately unchanged
+  and still moves only a `Task` or an `Agent`: a workflow carries a script
+  rather than a model, and writing one in would be inventing a field the tool
+  never reads.
+
+- The room in front of the ceiling survives a heads-up. A heads-up and a reset
+  announcement are spent by being said, and the breach file they rode in on was
+  deleted with them — but that file is also the only thing that wakes the gate,
+  since the hot path exits before Node when it is gone. Every launch between a
+  heads-up and the next statusline render therefore went unheld, which is
+  exactly the moment a turn tends to fan out. Whatever is still true is now
+  written back in that file's place.
+
+- A refused launch no longer spends the bell the line still needs. The refusal
+  and the warning each ring once per window, and both recorded it under the
+  same name, so a launch held back at 91% left a line crossed at 93% silent
+  under `action warn`. They keep their own counts now.
+
+- `/cclimit status` reports the hold whenever it is in force. It read the kind
+  off the breach file, and past the line that file carries the line — so status
+  said nothing about subagents while the gate was refusing them.
+
+- The refusal no longer claims less room than there is. With exactly the
+  reserve left in front of the ceiling — 90% under a 95% ceiling with
+  `reserve 5` — the sentence read "5% of room, less than the 5 points". The
+  comparison is unchanged and still holds at equality; the wording now says
+  "no more than".
+
 ## 0.6.0
 
 - `/cclimit reserve <points>` keeps a subagent launch from starting right
