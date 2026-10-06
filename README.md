@@ -73,15 +73,16 @@ call; it is a whole session's worth of them starting at once.
 
 ## Install
 
+cclimit is listed in Anthropic's plugin directory. In Claude Code v2.1.287 or
+later, run `/plugin directory`, find cclimit, install it, and then run:
+
 ```
-/plugin marketplace add anthropics/claude-plugins-community
-/plugin install cclimit@claude-community
 /cclimit install
 ```
 
-The community catalog syncs on its own schedule, so if the install says the
-plugin is not in it yet, use this repository's own marketplace instead. It
-carries the same plugin and the same versions:
+The directory serves a reviewed version pinned to one commit, so it can trail
+this repository. To follow every release as it ships, install from this
+repository's own marketplace instead:
 
 ```
 /plugin marketplace add epogonii/cclimit
@@ -89,7 +90,9 @@ carries the same plugin and the same versions:
 /cclimit install
 ```
 
-That last step is not optional, and it is worth knowing what it does.
+Install it one way, not both: two copies run every hook twice.
+
+`/cclimit install` is not optional, and it is worth knowing what it does.
 
 The usage percentages exist in exactly one place a plugin can reach: the JSON
 payload Claude Code writes to the statusline command's stdin. Hook payloads do
